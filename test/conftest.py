@@ -38,12 +38,13 @@ ERROR_INVALID_CHOICE = 'Not a valid choice'
 
 @pytest.fixture(scope="session")
 def app(request):
-    flask_app = create_app()
-    flask_app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
-    flask_app.config['TESTING'] = True
-    flask_app.config['WTF_CSRF_ENABLED'] = False
-    flask_app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    flask_app.config['SERVER_NAME'] = 'cyber.local'
+    flask_app = create_app({
+        'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:',
+        'TESTING': True,
+        'WTF_CSRF_ENABLED': False,
+        'SQLALCHEMY_TRACK_MODIFICATIONS': False,
+        'SERVER_NAME': 'cyber.local',
+    })
     with flask_app.app_context():
         yield flask_app
 
@@ -63,22 +64,13 @@ def db(app, request):
 @pytest.fixture(autouse=True, scope='function')
 def run_scoped(app, db, client, request):
     with app.app_context():
-        connection = db.engine.connect()
-        transaction = connection.begin()
-
-        options = dict(bind=connection, binds={})
-        session = db.create_scoped_session(options=options)
-
-        db.session = session
         db.create_all()
-
-        with client:
-            yield
-
-        db.drop_all()
-        transaction.rollback()
-        connection.close()
-        session.remove()
+        try:
+            with client:
+                yield
+        finally:
+            db.session.remove()
+            db.drop_all()
 
 
 @pytest.fixture(scope='function')

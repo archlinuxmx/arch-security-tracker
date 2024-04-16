@@ -9,6 +9,7 @@ PYTEST_PDB_OPTIONS?=--pdb --pdbcls=IPython.terminal.debugger:TerminalPdb
 
 ISORT?=isort
 ISORT_OPTIONS+=--skip .virtualenv --skip .venv
+ISORT_INPUT?=tracker test config.py
 ISORT_CHECK_OPTIONS+=--check-only --diff
 
 .PHONY: update test
@@ -48,15 +49,15 @@ db-upgrade: setup
 
 test: test-py test-isort
 
-test-py coverage: setup
+test-py coverage:
 	PYTHONPATH=".:${PYTHONPATH}" ${PYTEST} ${PYTEST_INPUT} ${PYTEST_OPTIONS} ${PYTEST_COVERAGE_OPTIONS}
 
 test-isort:
 	@if [[ -n "$$(which colordiff 2>/dev/null)" ]]; then \
-		DIFF="$$(${ISORT} ${ISORT_OPTIONS} ${ISORT_CHECK_OPTIONS} .)"; EXIT=$$?; \
+		DIFF="$$(${ISORT} ${ISORT_OPTIONS} ${ISORT_CHECK_OPTIONS} ${ISORT_INPUT})"; EXIT=$$?; \
 		cat <<< $$DIFF|colordiff; if [[ 0 -ne "$$EXIT" ]]; then exit $$EXIT; fi; \
 	else \
-		${ISORT} ${ISORT_OPTIONS} ${ISORT_CHECK_OPTIONS} .; \
+		${ISORT} ${ISORT_OPTIONS} ${ISORT_CHECK_OPTIONS} ${ISORT_INPUT}; \
 	fi
 	@echo "Checking isort...ok"
 
@@ -64,4 +65,4 @@ open-coverage: coverage
 	${BROWSER} test/coverage/index.html
 
 isort:
-	${ISORT} ${ISORT_OPTIONS} .
+	${ISORT} ${ISORT_OPTIONS} ${ISORT_INPUT}

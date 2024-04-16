@@ -98,9 +98,11 @@ oauth = OAuth()
 tracker = Blueprint('tracker', __name__)
 
 
-def create_app(script_info=None):
+def create_app(test_config=None):
     app = Flask(__name__)
     app.config.from_object('config')
+    if test_config is not None:
+        app.config.update(test_config)
 
     db.init_app(app)
     migrate.init_app(app)
