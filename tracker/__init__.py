@@ -141,9 +141,11 @@ def create_app(test_config=None):
     for error_handler in error_handlers:
         app.register_error_handler(error_handler['code_or_exception'], error_handler['func'])
 
+    from tracker.api import api
     from tracker.view.blueprint import blueprint
     app.register_blueprint(tracker)
     app.register_blueprint(blueprint)
+    app.register_blueprint(api)
 
     @app.shell_context_processor
     def make_shell_context():

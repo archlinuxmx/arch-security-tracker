@@ -32,6 +32,10 @@ def errorhandler(code_or_exception):
 
 
 def handle_error(e, code, json=False):
+    from tracker.api import error_response
+    from tracker.api import is_api_request
+    if is_api_request():
+        return error_response(e, code)
     if json:
         return {'message': e}, code
     return make_response(render_template('error.html',
