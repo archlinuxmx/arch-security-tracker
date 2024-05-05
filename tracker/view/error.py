@@ -15,6 +15,8 @@ from werkzeug.exceptions import NotFound
 
 from config import get_debug_flag
 from tracker import tracker
+from tracker.api import error_response
+from tracker.api import is_api_request
 from tracker.symbol import smileys_sad
 
 error_handlers = []
@@ -32,6 +34,8 @@ def errorhandler(code_or_exception):
 
 
 def handle_error(e, code, json=False):
+    if is_api_request():
+        return error_response(e, code)
     if json:
         return {'message': e}, code
     return make_response(render_template('error.html',
