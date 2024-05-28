@@ -1,6 +1,7 @@
 from .add import *
 from .admin import *
 from .advisory import *
+from .apitoken import *
 from .copy import *
 from .delete import *
 from .edit import *

@@ -1,0 +1,50 @@
+{%- extends "base.html" -%}
+{% block content %}
+			<h1>{{ title }}</h1>
+			<p>API tokens can create CVEs with your reporter permissions. They expire after 90 days.
+				Use a separate token for each application and revoke tokens you no longer need.</p>
+			{% if secret %}
+			<div class="box">
+				<p>Copy this token now. It will not be shown again.</p>
+				<code id="new-api-token">{{ secret }}</code>
+			</div>
+			{% endif %}
+			<div class="medium size">
+				<form action="{{ url_for('tracker.manage_api_tokens') }}" method="post" name="create_api_token">
+					{{ form.hidden_tag() }}
+					{% if form.csrf_token is defined %}
+					{% for error in form.csrf_token.errors %}
+					<p>{{ error }}</p>
+					{% endfor %}
+					{% endif %}
+					{{ render_field(form.name, class='full size', maxlength=64, placeholder='Local ingestion tool', required='', indent=5) }}
+					{{ form.submit(class='button-primary') }}
+				</form>
+			</div>
+			<h2>Your tokens</h2>
+			{% if tokens %}
+			<table class="styled-table full size">
+				<thead>
+					<tr><th>Name</th><th>Scope</th><th>Created (UTC)</th><th>Expires (UTC)</th><th>Action</th></tr>
+				</thead>
+				<tbody>
+					{% for token in tokens %}
+					<tr>
+						<td>{{ token.name }}</td>
+						<td>{{ token.scope }}</td>
+						<td>{{ token.created.strftime('%Y-%m-%d %H:%M') }}</td>
+						<td>{{ token.expires_at.strftime('%Y-%m-%d %H:%M') }}</td>
+						<td>
+							<form action="{{ url_for('tracker.revoke_api_token', token_id=token.id) }}" method="post">
+								{{ revoke_form.hidden_tag() }}
+								{{ revoke_form.submit(class='button-primary') }}
+							</form>
+						</td>
+					</tr>
+					{% endfor %}
+				</tbody>
+			</table>
+			{% else %}
+			<p>You have no API tokens.</p>
+			{% endif %}
+{%- endblock %}
