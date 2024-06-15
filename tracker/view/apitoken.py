@@ -30,13 +30,15 @@ def manage_api_tokens():
         return forbidden()
 
     form = ApiTokenForm()
+    if not current_user.role.is_security_team:
+        form.scope.choices = [(scope, scope) for scope in ApiToken.SCOPES if scope != 'advisories:write']
     secret = None
     status = 200
     if form.validate_on_submit():
-        token, secret = ApiToken.issue(current_user._get_current_object(), form.name.data)
+        token, secret = ApiToken.issue(current_user._get_current_object(), form.name.data, form.scope.data)
         db.session.add(token)
         db.session.commit()
-        form = ApiTokenForm(formdata=None)
+        form.name.data = ''
     elif request.method == 'POST':
         status = 400
 

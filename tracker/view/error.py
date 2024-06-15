@@ -72,6 +72,12 @@ def bad_request(e='400: Bad Request', json=False):
 @errorhandler(Exception)
 @errorhandler(InternalServerError.code)
 def internal_error(e):
+    from werkzeug.exceptions import HTTPException
+
+    from tracker.api import error_response
+    from tracker.api import is_api_request
+    if is_api_request() and isinstance(e, HTTPException):
+        return error_response(e)
     if get_debug_flag():
         raise e
     code = hexlify(urandom(4)).decode()

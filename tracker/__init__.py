@@ -3,8 +3,11 @@ from types import MethodType
 from authlib.integrations.flask_client import OAuth
 from flask import Blueprint
 from flask import Flask
+from flask import g
+from flask import has_request_context
 from flask import url_for
 from flask_login import LoginManager
+from flask_login import current_user
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 from flask_talisman import Talisman
@@ -90,7 +93,17 @@ db.get = MethodType(db_get, db)
 db.create = MethodType(db_create, db)
 db.get_or_create = MethodType(db_get_or_create, db)
 
-make_versioned(plugins=[FlaskPlugin(), PropertyModTrackerPlugin()])
+
+def audit_user_id():
+    if not has_request_context():
+        return None
+    api_user = g.get('api_user')
+    if api_user is not None:
+        return api_user.id
+    return current_user.id if current_user.is_authenticated else None
+
+
+make_versioned(plugins=[FlaskPlugin(current_user_id_factory=audit_user_id), PropertyModTrackerPlugin()])
 migrate = Migrate(db=db, directory=SQLALCHEMY_MIGRATE_REPO)
 talisman = Talisman()
 login_manager = LoginManager()

@@ -9,6 +9,7 @@ from tracker import db
 class ApiToken(db.Model):
     NAME_LENGTH = 64
     SCOPE = 'cves:create'
+    SCOPES = ('cves:create', 'cves:update', 'groups:create', 'groups:update', 'advisories:write')
     LIFETIME = timedelta(days=90)
 
     __tablename__ = 'api_token'
@@ -27,10 +28,12 @@ class ApiToken(db.Model):
         return sha256(raw.encode('utf-8')).hexdigest()
 
     @classmethod
-    def issue(cls, user, name):
+    def issue(cls, user, name, scope=SCOPE):
         """Return an unsaved token and its secret, which must only be shown once."""
+        if scope not in cls.SCOPES or (scope == 'advisories:write' and not user.role.is_security_team):
+            raise ValueError('Scope is not available to this user.')
         raw = 'ast_' + token_urlsafe(32)
         created = datetime.utcnow()
-        token = cls(user=user, name=name, token_hash=cls.digest(raw), scope=cls.SCOPE,
+        token = cls(user=user, name=name, token_hash=cls.digest(raw), scope=scope,
                     created=created, expires_at=created + cls.LIFETIME)
         return token, raw

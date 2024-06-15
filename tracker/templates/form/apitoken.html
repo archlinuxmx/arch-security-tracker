@@ -1,7 +1,7 @@
 {%- extends "base.html" -%}
 {% block content %}
 			<h1>{{ title }}</h1>
-			<p>API tokens can create CVEs with your reporter permissions. They expire after 90 days.
+			<p>API tokens have one scope and use your current account permissions. They expire after 90 days.
 				Use a separate token for each application and revoke tokens you no longer need.</p>
 			{% if secret %}
 			<div class="box">
@@ -18,6 +18,7 @@
 					{% endfor %}
 					{% endif %}
 					{{ render_field(form.name, class='full size', maxlength=64, placeholder='Local ingestion tool', required='', indent=5) }}
+					{{ render_field(form.scope, class='full size', indent=5) }}
 					{{ form.submit(class='button-primary') }}
 				</form>
 			</div>
