@@ -1,3 +1,4 @@
+from wtforms import SelectField
 from wtforms import StringField
 from wtforms import SubmitField
 from wtforms.validators import DataRequired
@@ -10,6 +11,7 @@ from .base import BaseForm
 
 class ApiTokenForm(BaseForm):
     name = StringField('Name', validators=[DataRequired(), Length(max=ApiToken.NAME_LENGTH)])
+    scope = SelectField('Scope', default=ApiToken.SCOPE, choices=[(scope, scope) for scope in ApiToken.SCOPES])
     submit = SubmitField('Create token')
 
 

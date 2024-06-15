@@ -9,6 +9,7 @@ from flask import render_template
 from werkzeug.exceptions import BadRequest
 from werkzeug.exceptions import Forbidden
 from werkzeug.exceptions import Gone
+from werkzeug.exceptions import HTTPException
 from werkzeug.exceptions import InternalServerError
 from werkzeug.exceptions import MethodNotAllowed
 from werkzeug.exceptions import NotFound
@@ -72,6 +73,8 @@ def bad_request(e='400: Bad Request', json=False):
 @errorhandler(Exception)
 @errorhandler(InternalServerError.code)
 def internal_error(e):
+    if is_api_request() and isinstance(e, HTTPException):
+        return error_response(e)
     if get_debug_flag():
         raise e
     code = hexlify(urandom(4)).decode()
