@@ -55,6 +55,13 @@
 						<td>Severity</td>
 						<td>{{ colorize_severity(issue.severity) }}</td>
 					</tr>
+					{% if issue.cvss_score is not none %}
+					<tr>
+						<td>CVSS {{ issue.cvss_version }}</td>
+						<td>{{ issue.cvss_score }} — <code>{{ issue.cvss_vector }}</code>
+							<a href="{{ issue.cvss_source }}" rel="noopener">Source</a></td>
+					</tr>
+					{% endif %}
 					<tr>
 						<td>Remote</td>
 						<td>{{ colorize_remote(issue.remote) }}</td>
