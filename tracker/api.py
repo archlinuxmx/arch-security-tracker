@@ -20,6 +20,8 @@ from werkzeug.exceptions import NotFound
 from wtforms.validators import URL
 
 from tracker import db
+from tracker.cvss import cvss_json
+from tracker.cvss import parse_cvss
 from tracker.model import CVE
 from tracker.model import CVEGroupEntry
 from tracker.model import CVEGroupPackage
@@ -117,6 +119,7 @@ def serialize_cves(cves):
         'description': cve.description or '',
         'references': cve.reference.splitlines() if cve.reference else [],
         'notes': cve.notes or '',
+        'cvss': cvss_json(cve),
         'groups': sorted(groups[cve.id]),
         'packages': sorted(packages[cve.id]),
         'created': timestamp(cve.created),
@@ -213,7 +216,13 @@ def valid_text(value, max_length):
 
 def validate_cve(data):
     fields = {}
-    allowed = {'name', 'type', 'severity', 'vector', 'description', 'references', 'notes'}
+    allowed = {'name', 'type', 'severity', 'vector', 'description', 'references', 'notes', 'cvss'}
+    cvss = {}
+    if 'cvss' in data:
+        try:
+            cvss = parse_cvss(data['cvss'])
+        except ValueError as error:
+            fields['cvss'] = [str(error)]
     for name in sorted(set(data) - allowed):
         fields[name] = ['Unknown or read-only field.']
     if not valid_name(data.get('name')):
@@ -251,7 +260,7 @@ def validate_cve(data):
     return dict(id=data['name'], issue_type=data.get('type', 'unknown'),
                 severity=Severity[data.get('severity', 'unknown')],
                 remote=Remote[data.get('vector', 'unknown')], description=data.get('description', ''),
-                reference='\n'.join(references), notes=data.get('notes', ''))
+                reference='\n'.join(references), notes=data.get('notes', ''), **cvss)
 
 
 @api.route('/cves', methods=['POST'])

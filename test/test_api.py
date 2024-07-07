@@ -215,6 +215,9 @@ def test_create_cve_metadata(db, client, api_token):
         'vector': 'remote',
         'description': 'First paragraph.\n\nSecond paragraph: café.',
         'notes': 'Needs package investigation.',
+        'cvss': {'version': '3.1', 'score': 7.5,
+                 'vector': 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N',
+                 'source': 'https://example.org/advisory'},
         'references': ['https://example.org/advisory', 'https://example.org/fix', 'https://example.org/advisory'],
     }
     response = client.post(COLLECTION, json=payload, headers=headers)
@@ -223,12 +226,19 @@ def test_create_cve_metadata(db, client, api_token):
     assert {field: response.get_json()[field] for field in expected} == expected
     assert client.get(response.headers['Location']).get_json() == response.get_json()
     assert CVE.query.one().reference == '\n'.join(expected['references'])
+    assert b'CVSS 3.1' in client.get('/' + payload['name']).data
 
 
 def test_invalid_metadata_is_atomic(db, client, api_token):
     _, headers = api_token
     reference = 'https://example.org/' + 'x' * (2048 - len('https://example.org/'))
-    for fields in ({'severity': 'High'}, {'description': 'x' * 4097}, {'notes': None},
+    cvss = {'version': '3.1', 'score': 7.5, 'vector': 'CVSS:3.1/AV:N', 'source': 'https://example.org'}
+    for fields in ({'cvss': {'version': '3.1', 'score': 11, 'vector': 'bad', 'source': 'https://example.org'}},
+                   {'cvss': dict(cvss, score='7.5')},
+                   {'cvss': dict(cvss, source='https://example.org/\x7f')},
+                   {'cvss': dict(cvss, source='https://user@/')},
+                   {'cvss': dict(cvss, source='https://example.org:999999/')},
+                   {'severity': 'High'}, {'description': 'x' * 4097}, {'notes': None},
                    {'description': '\ud800'}, {'references': ['javascript:alert(1)']},
                    {'references': ['https://user@/']}, {'references': ['https://example.org:999999/']},
                    {'references': [reference, reference[:-1] + 'y']}):

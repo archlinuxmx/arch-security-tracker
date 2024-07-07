@@ -58,6 +58,10 @@ class CVE(db.Model):
     remote = db.Column(Remote.as_type(), nullable=False, default=Remote.unknown)
     reference = db.Column(db.String(REFERENCES_LENGTH))
     notes = db.Column(db.String(NOTES_LENGTH))
+    cvss_version = db.Column(db.String(8))
+    cvss_score = db.Column(db.Numeric(3, 1))
+    cvss_vector = db.Column(db.String(256))
+    cvss_source = db.Column(db.String(2048))
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     changed = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 
