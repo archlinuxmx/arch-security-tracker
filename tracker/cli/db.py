@@ -1,14 +1,12 @@
-from os.path import exists
-from os.path import join
-
 from click import echo
 from click import option
 from click import pass_context
 from flask.cli import with_appcontext
 from flask_migrate import stamp
 from flask_migrate.cli import db as db_cli
+from sqlalchemy import inspect
+from sqlalchemy import text
 
-from config import basedir
 from tracker import db
 
 
@@ -23,7 +21,8 @@ def vacuum():
     """Perform vacuum on the database."""
 
     echo('Performing database vacuum...', nl=False)
-    db.session.execute('VACUUM')
+    with db.engine.connect().execution_options(isolation_level='AUTOCOMMIT') as connection:
+        connection.exec_driver_sql('VACUUM')
     echo('done')
 
 
@@ -51,11 +50,13 @@ def initdb(ctx, purge):
     if purge:
         ctx.invoke(drop)
 
+    if set(inspect(db.engine).get_table_names()) - {'alembic_version'}:
+        echo('Database already contains tables; use "trackerctl db upgrade" to apply migrations.')
+        return
+
     echo('Initializing database...', nl=False)
-    db_exists = exists(join(basedir, 'tracker.db'))
     db.create_all()
-    if not db_exists:
-        stamp()
+    stamp()
     echo('done')
 
 
@@ -74,8 +75,8 @@ def check(integrity, foreign_key):
 
     if integrity:
         echo('Checking database integrity...', nl=False)
-        integrity_result = db.session.execute('PRAGMA integrity_check')
-        integrity_errors = list(filter(lambda result: result[0] != 'ok', integrity_result.fetchall()))
+        integrity_result = db.session.execute(text('PRAGMA integrity_check'))
+        integrity_errors = [result for result in integrity_result if result[0] != 'ok']
         if not integrity_errors:
             echo('ok')
         else:
@@ -85,7 +86,7 @@ def check(integrity, foreign_key):
 
     if foreign_key:
         echo('Checking database foreign keys...', nl=False)
-        foreign_key_errors = db.session.execute('PRAGMA foreign_key_check').fetchall()
+        foreign_key_errors = db.session.execute(text('PRAGMA foreign_key_check')).fetchall()
         if not foreign_key_errors:
             echo('ok')
         else:
@@ -94,10 +95,10 @@ def check(integrity, foreign_key):
             header_row = 'row id'
             header_parent = 'parent'
             header_fkey = 'fkey idx'
-            max_table = max(list(map(lambda error: len(error[0]), foreign_key_errors)) + [len(header_table)])
-            max_row = max(list(map(lambda error: len(str(error[1])), foreign_key_errors)) + [len(header_row)])
-            max_parent = max(list(map(lambda error: len(error[2]), foreign_key_errors)) + [len(header_parent)])
-            max_fkey = max(list(map(lambda error: len(str(error[3])), foreign_key_errors)) + [len(header_fkey)])
+            max_table = max([len(error[0]) for error in foreign_key_errors] + [len(header_table)])
+            max_row = max([len(str(error[1])) for error in foreign_key_errors] + [len(header_row)])
+            max_parent = max([len(error[2]) for error in foreign_key_errors] + [len(header_parent)])
+            max_fkey = max([len(str(error[3])) for error in foreign_key_errors] + [len(header_fkey)])
             header = ' {} | {} | {} | {} '.format(header_table.ljust(max_table),
                                                   header_row.ljust(max_row),
                                                   header_parent.ljust(max_parent),

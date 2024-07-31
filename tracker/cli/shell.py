@@ -1,5 +1,6 @@
 from click import UNPROCESSED
 from click import argument
+from flask import current_app
 from flask.cli import with_appcontext
 
 from .util import cli
@@ -20,8 +21,7 @@ def shell(ipython_args):
     from sys import platform
     from sys import version
 
-    from flask.globals import _app_ctx_stack
-    app = _app_ctx_stack.top.app
+    app = current_app._get_current_object()
     ctx = app.make_shell_context()
 
     try:

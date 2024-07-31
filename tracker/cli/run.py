@@ -1,5 +1,6 @@
 from click import option
-from flask.cli import pass_script_info
+from click import pass_context
+from flask.cli import ScriptInfo
 
 from config import FLASK_DEBUG
 from config import FLASK_HOST
@@ -9,7 +10,7 @@ from config import set_debug_flag
 from .util import cli
 
 
-@cli.command('run', short_help='Runs a development server.')
+@cli.command('run', short_help='Runs a development server.', with_appcontext=False)
 @option('--host', '-h', default=FLASK_HOST,
         help='The interface to bind to.')
 @option('--port', '-p', default=FLASK_PORT,
@@ -25,8 +26,8 @@ from .util import cli
         'is active if debug is enabled.')
 @option('--with-threads/--without-threads', default=False,
         help='Enable or disable multithreading.')
-@pass_script_info
-def run(info, host, port, debug, reload, debugger, with_threads):
+@pass_context
+def run(ctx, host, port, debug, reload, debugger, with_threads):
     """Runs a local development server for the Flask application.
 
     This local server is recommended for development purposes only but it
@@ -49,17 +50,13 @@ def run(info, host, port, debug, reload, debugger, with_threads):
     if debugger is None:
         debugger = bool(debug)
 
-    app = info.load_app()
+    app = ctx.ensure_object(ScriptInfo).load_app()
+    app.debug = debug
 
     # Extra startup messages.  This depends a bit on Werkzeug internals to
     # not double execute when the reloader kicks in.
     if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
-        # If we have an import path we can print it out now which can help
-        # people understand what's being served.  If we do not have an
-        # import path because the app was loaded through a callback then
-        # we won't print anything.
-        if info.app_import_path is not None:
-            print(' * Serving Flask app "{}"'.format(info.app_import_path))
+        print(' * Serving Flask app "{}"'.format(app.import_name))
         if debug is not None:
             print(' * Forcing debug mode {}'.format(debug and 'on' or 'off'))
 
