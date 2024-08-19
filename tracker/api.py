@@ -13,6 +13,7 @@ from flask import g
 from flask import jsonify
 from flask import request
 from flask import url_for
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from werkzeug.exceptions import BadRequest
 from werkzeug.exceptions import HTTPException
@@ -81,7 +82,7 @@ def handle_http_error(error):
 @api.errorhandler(Exception)
 def handle_internal_error(error):
     db.session.rollback()
-    current_app.logger.exception('CVE API request failed')
+    current_app.logger.exception('API request failed')
     return error_response(error, 500)
 
 
@@ -125,9 +126,9 @@ def serialize_cves(cves):
 
 @api.route('/cves', methods=['GET'])
 def list_cves():
-    if (set(request.args) - {'limit', 'after'}
+    if (set(request.args) - {'limit', 'after', 'package', 'orphan', 'severity', 'q'}
             or any(len(values) != 1 for key, values in request.args.lists())):
-        raise BadRequest('Only one limit and one after parameter are accepted.')
+        raise BadRequest('Unknown or repeated query parameter.')
     raw_limit = request.args.get('limit', '50')
     if not re.fullmatch(r'[0-9]{1,3}', raw_limit) or not 1 <= int(raw_limit) <= 100:
         raise BadRequest('limit must be an integer between 1 and 100.')
@@ -138,6 +139,25 @@ def list_cves():
         if not valid_name(after):
             raise BadRequest('after must be a CVE identifier.')
         query = query.filter(CVE.id > after)
+    if 'package' in request.args:
+        matching = (db.session.query(CVEGroupEntry.cve_id)
+                    .join(CVEGroupPackage, CVEGroupPackage.group_id == CVEGroupEntry.group_id)
+                    .filter(CVEGroupPackage.pkgname == request.args['package']))
+        query = query.filter(CVE.id.in_(matching))
+    if 'orphan' in request.args:
+        if request.args['orphan'] not in ('true', 'false'):
+            raise BadRequest('orphan must be true or false.')
+        linked = CVE.id.in_(db.session.query(CVEGroupEntry.cve_id))
+        query = query.filter(~linked if request.args['orphan'] == 'true' else linked)
+    if 'severity' in request.args:
+        if request.args['severity'] not in Severity.__members__:
+            raise BadRequest('Unknown severity.')
+        query = query.filter(CVE.severity == Severity[request.args['severity']])
+    if 'q' in request.args:
+        term = request.args['q']
+        query = query.filter(or_(CVE.id.contains(term, autoescape=True),
+                                 CVE.description.contains(term, autoescape=True),
+                                 CVE.notes.contains(term, autoescape=True)))
     rows = query.limit(limit + 1).all()
     return jsonify(items=serialize_cves(rows[:limit]),
                    next_cursor=rows[limit - 1].id if len(rows) > limit else None)
