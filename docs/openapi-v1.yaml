@@ -1,0 +1,218 @@
+openapi: 3.0.3
+info:
+  title: Arch Linux Security Tracker CVE API
+  version: '1'
+  description: Public CVE reads and token-authenticated, create-only writes.
+servers:
+  - url: /api/v1
+security: []
+paths:
+  /cves:
+    get:
+      operationId: listCVEs
+      summary: List CVEs, including records without AVGs
+      description: Lexicographic identifier pagination, not a snapshot or update feed.
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+        - name: after
+          in: query
+          description: Return identifiers strictly greater than this cursor.
+          schema: {$ref: '#/components/schemas/CVEName'}
+      responses:
+        '200':
+          description: CVE page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/CVE'}
+                  next_cursor: {type: string, nullable: true}
+        '400': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createCVE
+      summary: Create a CVE without an AVG
+      description: >-
+        Requires cves:create scope and an active reporter or higher. Publishes all
+        fields immediately, including notes; audit history names the token owner.
+        Validates before insertion. Duplicate identifiers return 409 without
+        merging any fields, including concurrent inserts. Maximum body 65,536 bytes.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CVECreate'}
+            example:
+              name: CVE-2099-99999999
+              description: Synthetic local demonstration only.
+      responses:
+        '201':
+          description: CVE created
+          headers:
+            Location:
+              description: Relative URL of the new CVE.
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CVE'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '413': {$ref: '#/components/responses/Error'}
+        '415': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /cves/{name}:
+    get:
+      operationId: getCVE
+      summary: Read one CVE
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {$ref: '#/components/schemas/CVEName'}
+      responses:
+        '200':
+          description: CVE record; all fields are public
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CVE'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        Personal token from /tokens, with cves:create scope and 90-day expiry.
+        Browser cookies do not authorize writes. Token management requires login
+        and CSRF-protected browser forms. Revocation takes effect immediately.
+  responses:
+    Error:
+      description: >-
+        JSON error. 400 bad_request/invalid_json; 401 unauthorized; 403 forbidden;
+        404 not_found; 405 method_not_allowed; 409 already_exists;
+        413 payload_too_large; 415 unsupported_media_type; 422 validation_error;
+        500 internal_error. 401 includes WWW-Authenticate with a Bearer challenge.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+  schemas:
+    CVEName:
+      type: string
+      pattern: '^CVE-[0-9]{4}-[0-9]{4,}$'
+      maxLength: 64
+      description: Syntax validation only; does not establish CVE assignment.
+    CVECreate:
+      type: object
+      additionalProperties: false
+      required: [name]
+      description: >-
+        Omitted fields use defaults; explicit null is invalid. Text must contain
+        valid Unicode scalar values. application/*+json is also accepted.
+      properties:
+        name: {$ref: '#/components/schemas/CVEName'}
+        type:
+          type: string
+          default: unknown
+          enum:
+            - unknown
+            - access restriction bypass
+            - arbitrary code execution
+            - arbitrary command execution
+            - arbitrary file overwrite
+            - arbitrary filesystem access
+            - arbitrary file upload
+            - authentication bypass
+            - certificate verification bypass
+            - content spoofing
+            - cross-site request forgery
+            - cross-site scripting
+            - denial of service
+            - directory traversal
+            - incorrect calculation
+            - information disclosure
+            - insufficient validation
+            - man-in-the-middle
+            - open redirect
+            - private key recovery
+            - privilege escalation
+            - proxy injection
+            - same-origin policy bypass
+            - sandbox escape
+            - session hijacking
+            - signature forgery
+            - silent downgrade
+            - sql injection
+            - time alteration
+            - url request injection
+            - xml external entity injection
+        severity: {$ref: '#/components/schemas/Severity'}
+        vector: {$ref: '#/components/schemas/Vector'}
+        description: {type: string, maxLength: 4096, default: ''}
+        notes: {type: string, maxLength: 4096, default: '', description: Public notes.}
+        references:
+          type: array
+          default: []
+          description: >-
+            HTTP(S) URLs without whitespace or control characters. Deduplicated
+            in first-occurrence order. Newline-joined total after deduplication
+            must not exceed 4096 characters. URLs are not fetched.
+          items: {type: string, format: uri, pattern: '^[Hh][Tt][Tt][Pp][Ss]?://', maxLength: 4096}
+    CVE:
+      type: object
+      required: [name, type, severity, vector, description, notes, references, groups, packages, created, updated]
+      properties:
+        name: {type: string}
+        type: {type: string}
+        severity: {$ref: '#/components/schemas/Severity'}
+        vector: {$ref: '#/components/schemas/Vector'}
+        description: {type: string}
+        notes: {type: string, description: Public notes.}
+        references: {type: array, items: {type: string}}
+        groups:
+          type: array
+          uniqueItems: true
+          items: {type: string}
+          description: Sorted AVG identifiers; empty for orphan CVEs.
+        packages:
+          type: array
+          uniqueItems: true
+          items: {type: string}
+          description: Sorted package names linked through AVGs.
+        created: {type: string, format: date-time}
+        updated:
+          type: string
+          format: date-time
+          description: Stored changed timestamp; not reliable for incremental synchronization.
+    Severity:
+      type: string
+      default: unknown
+      enum: [unknown, critical, high, medium, low]
+    Vector:
+      type: string
+      default: unknown
+      enum: [unknown, remote, local]
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            fields:
+              type: object
+              additionalProperties: {type: array, items: {type: string}}

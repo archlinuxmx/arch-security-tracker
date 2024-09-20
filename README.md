@@ -91,6 +91,10 @@ that controls and operates different parts of the tracker. All commands
 and subcommands provide a ```--help``` option that describes the operation
 and all its available options.
 
+## HTTP API
+
+See the [API guide](docs/api-v1.md) and [OpenAPI](docs/openapi-v1.yaml).
+
 ## Configuration
 
 The configurations are all placed into the ```config``` directory and
