@@ -28,6 +28,8 @@ class CVEGroup(db.Model):
     notes = db.Column(db.String(NOTES_LENGTH))
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     changed = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    __mapper_args__ = {'version_id_col': changed, 'version_id_generator': False}
+
     advisory_qualified = db.Column(db.Boolean(), default=True, nullable=False)
 
     issues = db.relationship("CVEGroupEntry", back_populates="group", cascade="all,delete-orphan")

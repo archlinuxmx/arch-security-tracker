@@ -76,6 +76,7 @@ def error_response(error, code=None):
 
 @api.errorhandler(HTTPException)
 def handle_http_error(error):
+    db.session.rollback()
     return error_response(error)
 
 

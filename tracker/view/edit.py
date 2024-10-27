@@ -1,4 +1,3 @@
-from collections import defaultdict
 from datetime import datetime
 from itertools import chain
 
@@ -23,6 +22,7 @@ from tracker.model import CVEGroup
 from tracker.model import CVEGroupEntry
 from tracker.model import CVEGroupPackage
 from tracker.model.advisory import advisory_regex
+from tracker.model.advisory import advisory_types
 from tracker.model.cve import cve_id_regex
 from tracker.model.cvegroup import vulnerability_group_regex
 from tracker.model.enum import Affected
@@ -220,34 +220,10 @@ def edit_cve(cve):
     cve.notes = form.notes.data
 
     if severity_changed or issue_type_changed:
-        # update cached group severity for all goups containing this issue
-        group_ids = [group.id for group in groups]
-        issues = (db.session.query(CVEGroup, CVE)
-                  .join(CVEGroupEntry, CVEGroup.issues)
-                  .join(CVE, CVEGroupEntry.cve)
-                  .group_by(CVEGroup.id).group_by(CVE.id))
-        if group_ids:
-            issues = issues.filter(CVEGroup.id.in_(group_ids))
-        issues = (issues).all()
+        from tracker.api_workflow import refresh_group
 
-        if severity_changed:
-            group_severity = defaultdict(list)
-            for group, issue in issues:
-                group_severity[group].append(issue.severity)
-            for group, severities in group_severity.items():
-                group.severity = highest_severity(severities)
-
-        # update scheduled advisories if the issue type changes
-        if advisories and issue_type_changed:
-            group_issue_type = defaultdict(set)
-            for group, issue in issues:
-                group_issue_type[group].add(issue.issue_type)
-            for advisory in advisories:
-                if Publication.published == advisory.publication:
-                    continue
-                issue_types = group_issue_type[advisory.group_package.group]
-                issue_type = 'multiple issues' if len(issue_types) > 1 else next(iter(issue_types))
-                advisory.advisory_type = issue_type
+        for group in groups:
+            refresh_group(group, update_type=issue_type_changed)
 
     if db.session.is_modified(cve) or severity_changed or issue_type_changed:
         cve.changed = datetime.utcnow()
@@ -419,7 +395,7 @@ def edit_group(avg):
         if Publication.published == advisory.publication:
             continue
         issue_type = 'multiple issues' if len(set([issue.issue_type for issue in issues_final])) > 1 else next(iter(issues_final)).issue_type
-        advisory.advisory_type = issue_type
+        advisory.advisory_type = issue_type if issue_type in advisory_types else 'multiple issues'
 
     # update changed date on modification
     if pkgnames_changed or issues_changed or db.session.is_modified(group):

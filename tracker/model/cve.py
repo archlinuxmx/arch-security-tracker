@@ -64,6 +64,8 @@ class CVE(db.Model):
     cvss_source = db.Column(db.String(2048))
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     changed = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    __mapper_args__ = {'version_id_col': changed, 'version_id_generator': False}
+
 
     @staticmethod
     def new(id):

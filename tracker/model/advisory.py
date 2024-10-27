@@ -27,6 +27,8 @@ class Advisory(db.Model):
     content = db.Column(db.String(CONTENT_LENGTH), nullable=True)
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     changed = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    __mapper_args__ = {'version_id_col': changed, 'version_id_generator': False}
+
     reference = db.Column(db.String(REFERENCE_LENGTH), nullable=True)
 
     group_package = db.relationship("CVEGroupPackage")
