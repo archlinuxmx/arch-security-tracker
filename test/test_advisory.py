@@ -13,6 +13,7 @@ from tracker.advisory import advisory_get_impact_from_text
 from tracker.advisory import advisory_get_label
 from tracker.advisory import advisory_get_workaround_from_text
 from tracker.model.advisory import Advisory
+from tracker.model.cve import CVE
 from tracker.model.cve import issue_types
 from tracker.model.cvegroup import CVEGroup
 from tracker.model.enum import Publication
@@ -131,6 +132,10 @@ def test_switch_issue_type_changes_multiple_issues_advisory_to_single(db, client
     assert 200 == resp.status_code
     assert_advisory_data(DEFAULT_ADVISORY_ID, advisory_type=issue_types[1])
     assert 1 == advisory_count()
+    for issue in CVE.query.all():
+        data = default_issue_dict(dict(issue_type='unknown', changed=str(issue.changed)))
+        assert client.post(url_for('tracker.edit_cve', cve=issue.id), data=data).status_code == 302
+    assert_advisory_data(DEFAULT_ADVISORY_ID, advisory_type='multiple issues')
 
 
 @create_issue(id='CVE-1111-1111', issue_type=issue_types[1])
@@ -185,6 +190,10 @@ def test_switch_issue_type_changes_multi_package_advisory_to_single_type(db, cli
     assert_advisory_data(advisory_get_label(number=1), advisory_type=issue_types[2])
     assert_advisory_data(advisory_get_label(number=2), advisory_type=issue_types[2])
     assert 2 == advisory_count()
+    data.update(cve='CVE-1111-3333', changed=str(CVEGroup.query.one().changed))
+    assert client.post(url_for('tracker.edit_group', avg=DEFAULT_GROUP_NAME), data=data).status_code == 302
+    assert_advisory_data(advisory_get_label(number=1), advisory_type='multiple issues')
+    assert_advisory_data(advisory_get_label(number=2), advisory_type='multiple issues')
 
 
 @create_package(name='foo', version='1.2.3-4')

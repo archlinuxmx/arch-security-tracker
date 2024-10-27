@@ -9,6 +9,12 @@ advisory_types = list(filter(lambda e: e != 'unknown', issue_types))
 advisory_types.insert(0, 'multiple issues')
 
 
+def advisory_type_for(types):
+    types = set(types)
+    issue_type = types.pop() if len(types) == 1 else None
+    return issue_type if issue_type in advisory_types else 'multiple issues'
+
+
 class Advisory(db.Model):
     WORKAROUND_LENGTH = 4096
     IMPACT_LENGTH = 4096
@@ -27,6 +33,8 @@ class Advisory(db.Model):
     content = db.Column(db.String(CONTENT_LENGTH), nullable=True)
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     changed = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    __mapper_args__ = {'version_id_col': changed, 'version_id_generator': False}
+
     reference = db.Column(db.String(REFERENCE_LENGTH), nullable=True)
 
     group_package = db.relationship("CVEGroupPackage")

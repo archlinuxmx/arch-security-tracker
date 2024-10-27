@@ -6,6 +6,7 @@ from random import randint
 
 from flask import make_response
 from flask import render_template
+from sqlalchemy.orm.exc import StaleDataError
 from werkzeug.exceptions import BadRequest
 from werkzeug.exceptions import Forbidden
 from werkzeug.exceptions import Gone
@@ -15,6 +16,7 @@ from werkzeug.exceptions import MethodNotAllowed
 from werkzeug.exceptions import NotFound
 
 from config import get_debug_flag
+from tracker import db
 from tracker import tracker
 from tracker.api import error_response
 from tracker.api import is_api_request
@@ -81,3 +83,9 @@ def internal_error(e):
     error(Exception("Code: {}".format(code), e), exc_info=True)
     text = '500: Deep Shit\n{}'.format(code)
     return handle_error(text, InternalServerError.code)
+
+
+@tracker.errorhandler(StaleDataError)
+def concurrent_write(e):
+    db.session.rollback()
+    return handle_error('The record changed. Reload it and review your changes again.', 409)

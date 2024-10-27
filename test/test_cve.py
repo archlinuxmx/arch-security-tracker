@@ -10,6 +10,7 @@ from tracker.form.validators import ERROR_INVALID_URL
 from tracker.form.validators import ERROR_ISSUE_ID_INVALID
 from tracker.model.cve import CVE
 from tracker.model.cve import issue_types
+from tracker.model.cvegroup import CVEGroup
 from tracker.model.enum import Publication
 from tracker.model.enum import Remote
 from tracker.model.enum import Severity
@@ -166,6 +167,22 @@ def test_reporter_can_edit(db, client):
     assert 200 == resp.status_code
     cve = CVE.query.get(DEFAULT_ISSUE_ID)
     assert description == cve.description
+
+
+@create_issue
+@create_group(id=DEFAULT_GROUP_ID, issues=['CVE-2026-10001'], severity=Severity.high)
+@logged_in
+def test_editing_ungrouped_cve_leaves_unrelated_groups_untouched(db, client):
+    group = CVEGroup.query.get(DEFAULT_GROUP_ID)
+    changed = group.changed
+    history_count = group.versions.count()
+    data = default_issue_dict(dict(severity=Severity.low.name))
+    response = client.post(url_for('tracker.edit_cve', cve=DEFAULT_ISSUE_ID), data=data)
+    assert response.status_code == 302
+    assert CVE.query.get(DEFAULT_ISSUE_ID).severity == Severity.low
+    assert group.severity == Severity.high
+    assert group.changed == changed
+    assert group.versions.count() == history_count
 
 
 @create_issue
