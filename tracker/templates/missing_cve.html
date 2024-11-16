@@ -1,0 +1,8 @@
+{%- extends "base.html" -%}
+{% block content %}
+            <h1>{{ cve }} — Not Found</h1>
+            <p>This CVE has not been added to the tracker.</p>
+            {% if can_create %}
+            <p><a href="{{ url_for('tracker.add_cve', cve=cve) }}">Add {{ cve }}</a></p>
+            {% endif %}
+{%- endblock %}

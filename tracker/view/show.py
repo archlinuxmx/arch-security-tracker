@@ -177,7 +177,9 @@ def show_cve(cve):
     data = get_cve_data(cve)
 
     if not data:
-        return not_found()
+        return render_template('missing_cve.html', title='{} - Not Found'.format(cve),
+                               cve=cve, can_create=current_user.is_authenticated and
+                               current_user.active and current_user.role.is_reporter), 404
 
     packages = list(set(sorted([item for sublist in data['group_packages'].values() for item in sublist])))
     title = '{} - {}'.format(data['issue'].id, ' '.join(packages)) \

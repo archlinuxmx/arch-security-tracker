@@ -24,6 +24,9 @@
 						</div>
 					</div>
 					{{ render_field(form.description, class='full size', maxlength=CVE.DESCRIPTION_LENGTH, placeholder='Detailed description...', indent=5) }}
+                    <button type="button" id="unwrap-description">Unwrap prose paragraphs</button>
+                    <button type="button" id="undo-unwrap" disabled>Undo unwrap</button>
+                    <p>Review the result before saving; lists and indented or fenced code are preserved.</p>
 					{{ render_field(form.reference, class='full size', maxlength=CVE.REFERENCES_LENGTH, placeholder='Relevant external references...', indent=5) }}
 					{{ render_field(form.notes, class='full size', maxlength=CVE.NOTES_LENGTH, placeholder='Internal side notes...', indent=5) }}
 					{%- if concurrent_modification %}
@@ -36,4 +39,5 @@
 					{{ form.submit(class='button-primary', accesskey='s') }}
 				</form>
 			</div>
+            <script src="{{ url_for('static', filename='unwrap-description.js') }}" defer></script>
 {%- endblock %}
