@@ -513,3 +513,16 @@ def test_merge_issue_as_security_team_with_referenced_advisory(db, client):
 
     issue = CVE.query.get(DEFAULT_ISSUE_ID)
     assert 'changed' == issue.description
+
+
+@logged_in(role=UserRole.reporter)
+def test_missing_cve_creation_link(db, client):
+    cve = 'CVE-2024-98765'
+    response = client.get('/' + cve)
+    assert response.status_code == 404
+    assert (cve + ' - Not Found').encode() in response.data
+    assert ('/cve/add?cve=' + cve).encode() in response.data
+    response = client.get('/cve/add', query_string={'cve': cve})
+    assert ('value="' + cve + '"').encode() in response.data
+    client.get('/logout')
+    assert b'/cve/add?cve=' not in client.get('/' + cve).data

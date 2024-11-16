@@ -1,6 +1,7 @@
 from flask import flash
 from flask import redirect
 from flask import render_template
+from flask import request
 
 from tracker import db
 from tracker import tracker
@@ -34,6 +35,8 @@ ERROR_ISSUE_REFERENCED_BY_ADVISORY = 'Insufficient permissions to edit {} that i
 @reporter_required
 def add_cve():
     form = CVEForm()
+    if request.method == 'GET':
+        form.cve.data = request.args.get('cve', '')
     if not form.validate_on_submit():
         return render_template('form/cve.html',
                                title='Add CVE',
