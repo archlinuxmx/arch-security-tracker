@@ -1,0 +1,18 @@
+{%- extends "base.html" -%}
+{% block content %}
+            <h1>Search</h1>
+            <form method="get">
+                <label for="q">Identifier, package, description or notes</label>
+                <input id="q" name="q" value="{{ term }}" maxlength="256" autofocus>
+                <button type="submit">Search</button>
+            </form>
+            {% if term %}
+            <p>Showing up to 50 matches per category. Narrow your search to find more specific records.</p>
+            <h2>CVEs</h2>
+            <ul>{% for issue in issues %}<li><a href="/{{ issue.id }}">{{ issue.id }}</a> {{ (issue.description or '')|truncate(180) }}</li>{% else %}<li>No matches</li>{% endfor %}</ul>
+            <h2>Groups</h2>
+            <ul>{% for group in groups %}<li><a href="/{{ group.name }}">{{ group.name }}</a> {{ group.status.label }}</li>{% else %}<li>No matches</li>{% endfor %}</ul>
+            <h2>Packages</h2>
+            <ul>{% for package in packages %}<li><a href="{{ url_for('tracker.show_package', pkgname=package.name) }}">{{ package.name }}</a></li>{% else %}<li>No matches</li>{% endfor %}</ul>
+            {% endif %}
+{%- endblock %}

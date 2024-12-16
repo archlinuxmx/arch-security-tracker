@@ -1,6 +1,8 @@
 import re
+from functools import cmp_to_key as comparison_key
 from functools import wraps
 
+from flask import abort
 from flask import json
 from requests.models import PreparedRequest
 
@@ -13,6 +15,16 @@ punctuation_re = re.compile(
         '|'.join(map(re.escape, ('.', ',', ')', '>', '\n', '&gt;')))
     )
 )
+
+
+def page_number(value, per_page):
+    try:
+        page = int(value)
+    except ValueError:
+        abort(400)
+    if page < 1 or (page - 1) * per_page > 2**63 - 1:
+        abort(400)
+    return page
 
 
 def multiline_to_list(data, whitespace_separator=True, unique_only=True, filter_empty=True):
@@ -29,44 +41,22 @@ def multiline_to_list(data, whitespace_separator=True, unique_only=True, filter_
 
 
 def list_uniquify(data):
-    used = set()
-    return [e for e in data if e not in used and (used.add(e) or True)]
+    return list(dict.fromkeys(data))
 
 
-def cmp_to_key(cmp_func, getter=None):
-    class K(object):
-        def __init__(self, obj, *args):
-            self.obj = obj
+def cmp_to_key(compare, getter=None):
+    if getter is None:
+        return comparison_key(compare)
 
-        def extract(self, obj):
-            if getter:
-                return getter(obj)
-            return obj
+    def compare_items(left, right):
+        return compare(getter(left), getter(right))
 
-        def __lt__(self, other):
-            return cmp_func(self.extract(self.obj), self.extract(other.obj)) < 0
-
-        def __gt__(self, other):
-            return cmp_func(self.extract(self.obj), self.extract(other.obj)) > 0
-
-        def __eq__(self, other):
-            return cmp_func(self.extract(self.obj), self.extract(other.obj)) == 0
-
-        def __le__(self, other):
-            return cmp_func(self.extract(self.obj), self.extract(other.obj)) <= 0
-
-        def __ge__(self, other):
-            return cmp_func(self.extract(self.obj), self.extract(other.obj)) >= 0
-
-        def __ne__(self, other):
-            return cmp_func(self.extract(self.obj), self.extract(other.obj)) != 0
-    return K
+    return comparison_key(compare_items)
 
 
-def chunks(l, n):
-    """Yield successive n-sized chunks from l."""
-    for i in range(0, len(l), n):
-        yield l[i:i + n]
+def chunks(items, size):
+    for start in range(0, len(items), size):
+        yield items[start:start + size]
 
 
 def json_response(func):
@@ -93,8 +83,8 @@ def atom_feed(title):
 
 
 def issue_to_numeric(issue_label):
-    self_parts = issue_label.split('-')
-    return int(self_parts[1] + self_parts[2].rjust(7, '0'))
+    _, year, number = issue_label.split('-')
+    return int(year), int(number)
 
 
 def add_params_to_uri(url, params):

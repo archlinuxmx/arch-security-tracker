@@ -18,6 +18,7 @@ from tracker.model import User
 from tracker.user import hash_password
 from tracker.user import only_without_sso
 from tracker.user import random_string
+from tracker.util import page_number
 
 
 @tracker.route('/profile', methods=['GET', 'POST'])
@@ -43,10 +44,11 @@ def edit_own_user_profile():
 
 # TODO: define permission to view this
 @tracker.route('/user/<string:username>/log', defaults={'page': 1}, methods=['GET'])
-@tracker.route('/user/<string:username>/log/page/<int:page>', methods=['GET'])
+@tracker.route('/user/<string:username>/log/page/<regex("[0-9]{1,18}"):page>', methods=['GET'])
 @login_required
 def show_user_log(username, page=1):
     MAX_ENTRIES_PER_PAGE = 10
+    page = page_number(page, MAX_ENTRIES_PER_PAGE)
     Transaction = versioning_manager.transaction_cls
     VersionClassCVE = version_class(CVE)
     VersionClassGroup = version_class(CVEGroup)
@@ -58,8 +60,9 @@ def show_user_log(username, page=1):
                   .outerjoin(VersionClassAdvisory, Transaction.id == VersionClassAdvisory.transaction_id)
                   .join(User)
                   .filter(User.name == username)
-                  .order_by(Transaction.issued_at.desc())
-                  ).paginate(page, MAX_ENTRIES_PER_PAGE, True)
+                  .order_by(Transaction.issued_at.desc(), Transaction.id.desc(),
+                            VersionClassCVE.id, VersionClassGroup.id, VersionClassAdvisory.id)
+                  ).paginate(page=page, per_page=MAX_ENTRIES_PER_PAGE, error_out=True)
 
     return render_template('log/log.html',
                            title=f'User {username} - log',

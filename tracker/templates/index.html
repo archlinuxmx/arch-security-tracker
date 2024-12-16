@@ -2,18 +2,34 @@
 {%- from "_formhelpers.html" import nullable_value, colorize_severity, colorize_status, bug_ticket -%}
 {% block content %}
 			<h1>Issues</h1>
+            <p><a href="{{ url_for('tracker.search') }}">Search CVEs, groups and packages</a></p>
 			<div class="navbar">
 				<ul>
 					<li>{%- if not only_vulnerable %}<a href="{{ url_for('tracker.index_vulnerable') }}">vulnerable</a>{%- else %}<b>vulnerable</b>{%- endif %}</li>
 					<li>{%- if only_vulnerable %}<a href="{{ url_for('tracker.index_all') }}">all</a>{%- else %}<b>all</b>{%- endif %}</li>
 				</ul>
 			</div>
+            <form method="get">
+                <label for="sort">Sort by</label>
+                <select id="sort" name="sort">
+                    {% for value, label in [('priority', 'Priority'), ('created', 'Newest created'), ('changed', 'Last edited')] %}
+                    <option value="{{ value }}" {% if sort == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit">Sort</button>
+            </form>
+            <p>
+                {% if pagination.has_prev %}<a href="{{ url_for(request.endpoint, page=pagination.prev_num, sort=sort) }}">Previous</a> · {% endif %}
+                Page {{ pagination.page }} of {{ pagination.pages or 1 }}
+                {% if pagination.has_next %} · <a href="{{ url_for(request.endpoint, page=pagination.next_num, sort=sort) }}">Next</a>{% endif %}
+            </p>
 			<div class="scroll-x">
 				<table class="styled-table full size">
 					<thead>
 						<tr>
 							<th>Group</th>
 							<th>Issue</th>
+                            <th>Type</th>
 							<th>Package</th>
 							<th>Affected</th>
 							<th>Fixed</th>
@@ -32,6 +48,7 @@
 								<a href="/{{ cve.id }}">{{ cve.id }}</a>{% if not loop.last %}<br />{% endif %}
 								{%- endfor %}
 							</td>
+                            <td>{{ entry.types|join(', ') }}</td>
 							<td class="wrap">
 								{%- for pkg in entry.pkgs %}
 								<span class="no-wrap"><a href="/package/{{ pkg }}">{{ pkg }}</a>{% if not loop.last %}, {% endif %}</span>

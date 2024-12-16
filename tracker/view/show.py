@@ -47,6 +47,7 @@ from tracker.user import user_can_watch_log
 from tracker.user import user_can_watch_user_log
 from tracker.util import json_response
 from tracker.util import multiline_to_list
+from tracker.util import page_number
 from tracker.view.error import not_found
 
 
@@ -152,7 +153,7 @@ def show_cve_json(cve):
 
     cve = data['issue']
     references = cve.reference.replace('\r', '').split('\n') if cve.reference else []
-    packages = list(set(sorted([item for sublist in data['group_packages'].values() for item in sublist])))
+    packages = sorted({name for names in data['group_packages'].values() for name in names})
     advisories = data['advisories']
     if not current_user.role.is_reporter:
         advisories = list(filter(lambda advisory: advisory.publication == Publication.published, advisories))
@@ -181,7 +182,7 @@ def show_cve(cve):
                                cve=cve, can_create=current_user.is_authenticated and
                                current_user.active and current_user.role.is_reporter), 404
 
-    packages = list(set(sorted([item for sublist in data['group_packages'].values() for item in sublist])))
+    packages = sorted({name for names in data['group_packages'].values() for name in names})
     title = '{} - {}'.format(data['issue'].id, ' '.join(packages)) \
             if len(packages) else \
             '{}'.format(data['issue'].id)
@@ -236,7 +237,7 @@ def get_group_data(avg):
     for group_entry, cve, pkg, advisory, package in entries:
         group = group_entry
         issues.add(cve)
-        issue_types.add(cve.issue_type)
+        issue_types.add(cve.issue_type or 'unknown')
         packages.add(pkg)
         if package:
             versions.add(package)
@@ -244,7 +245,7 @@ def get_group_data(avg):
             advisories.add(advisory)
 
     advisories = sorted(advisories, key=lambda item: item.id, reverse=True)
-    issue_types = list(issue_types)
+    issue_types = sorted(issue_types)
     issues = sorted(issues, key=lambda item: item, reverse=True)
     packages = sorted(packages, key=lambda item: item.pkgname)
     versions = filter_duplicate_packages(sort_packages(list(versions)), True)
@@ -316,7 +317,7 @@ def show_group(avg):
     issue_types = data['issue_types']
     versions = data['versions']
     issue_type = 'multiple issues' if len(issue_types) > 1 else issue_types[0]
-    pkgnames = list(set(sorted([pkg.pkgname for pkg in packages])))
+    pkgnames = sorted({package.pkgname for package in packages})
 
     form = AdvisoryForm()
     form.advisory_type.data = issue_type
@@ -570,8 +571,9 @@ def show_advisory_log(advisory_id):
 
 # TODO: define permission to view this
 @tracker.route('/log', defaults={'page': 1}, methods=['GET'])
-@tracker.route('/log/page/<int:page>', methods=['GET'])
+@tracker.route('/log/page/<regex("[0-9]{1,18}"):page>', methods=['GET'])
 def show_log(page=1):
+    page = page_number(page, TRACKER_LOG_ENTRIES_PER_PAGE)
     Transaction = versioning_manager.transaction_cls
     VersionClassCVE = version_class(CVE)
     VersionClassGroup = version_class(CVEGroup)
@@ -581,11 +583,12 @@ def show_log(page=1):
                   .outerjoin(VersionClassCVE, Transaction.id == VersionClassCVE.transaction_id)
                   .outerjoin(VersionClassGroup, Transaction.id == VersionClassGroup.transaction_id)
                   .outerjoin(VersionClassAdvisory, Transaction.id == VersionClassAdvisory.transaction_id)
-                  .order_by(Transaction.issued_at.desc())
-                  .filter((VersionClassCVE.transaction_id) |
-                          (VersionClassGroup.transaction_id) |
-                          (VersionClassAdvisory.transaction_id))
-                  ).paginate(page, TRACKER_LOG_ENTRIES_PER_PAGE, True)
+                  .order_by(Transaction.issued_at.desc(), Transaction.id.desc(),
+                            VersionClassCVE.id, VersionClassGroup.id, VersionClassAdvisory.id)
+                  .filter((VersionClassCVE.transaction_id.isnot(None)) |
+                          (VersionClassGroup.transaction_id.isnot(None)) |
+                          (VersionClassAdvisory.transaction_id.isnot(None)))
+                  ).paginate(page=page, per_page=TRACKER_LOG_ENTRIES_PER_PAGE, error_out=True)
 
     return render_template('log/log.html',
                            title=f'Log',

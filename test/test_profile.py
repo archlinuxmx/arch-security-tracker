@@ -1,11 +1,16 @@
+from datetime import datetime
+from re import findall
+
 from flask import url_for
 from flask_login import current_user
+from sqlalchemy_continuum import versioning_manager
 
 from config import TRACKER_PASSWORD_LENGTH_MAX
 from config import TRACKER_PASSWORD_LENGTH_MIN
 from tracker.form.user import ERROR_PASSWORD_CONTAINS_USERNAME
 from tracker.form.user import ERROR_PASSWORD_INCORRECT
 from tracker.form.user import ERROR_PASSWORD_REPEAT_MISMATCHES
+from tracker.model import CVE
 from tracker.user import random_string
 
 from .conftest import DEFAULT_USERNAME
@@ -68,3 +73,23 @@ def test_current_password_incorrect(db, client):
                                  password_current=new_password))
     assert resp.status_code == 200
     assert ERROR_PASSWORD_INCORRECT in resp.data.decode()
+
+
+@logged_in
+def test_user_log_orders_transactions_with_equal_timestamps(db, client):
+    Transaction = versioning_manager.transaction_cls
+    for index in range(12):
+        issue = CVE.new('CVE-2026-{:04d}'.format(1000 + index))
+        db.session.add(issue)
+        db.session.commit()
+    Transaction.query.update({'issued_at': datetime(2026, 9, 1), 'user_id': current_user.id})
+    db.session.commit()
+
+    def logged_issues(page):
+        path = '/user/{}/log/page/{}'.format(DEFAULT_USERNAME, page)
+        response = client.get(path)
+        assert response.status_code == 200
+        return findall(rb'href="/(CVE-2026-[0-9]+)"', response.data)
+
+    assert logged_issues(1) == [f'CVE-2026-{number}'.encode() for number in range(1011, 1001, -1)]
+    assert logged_issues(2) == [b'CVE-2026-1001', b'CVE-2026-1000']
