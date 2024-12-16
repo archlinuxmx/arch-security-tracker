@@ -526,3 +526,14 @@ def test_missing_cve_creation_link(db, client):
     assert ('value="' + cve + '"').encode() in response.data
     client.get('/logout')
     assert b'/cve/add?cve=' not in client.get('/' + cve).data
+
+
+@create_issue(count=2)
+def test_global_log_pagination(db, client, monkeypatch):
+    monkeypatch.setattr('tracker.view.show.TRACKER_LOG_ENTRIES_PER_PAGE', 1)
+    assert client.get('/log').status_code == 200
+    assert client.get('/log/page/2').status_code == 200
+    assert client.get('/log/page/3').status_code == 404
+    assert client.get('/log/page/' + '9' * 100).status_code == 404
+    monkeypatch.setattr('tracker.view.show.TRACKER_LOG_ENTRIES_PER_PAGE', 50)
+    assert client.get('/log/page/' + '9' * 18).status_code == 400
