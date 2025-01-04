@@ -2,6 +2,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from sqlalchemy import func
+from sqlalchemy.exc import SQLAlchemyError
 
 from tracker import db
 from tracker.model import CVE
@@ -66,18 +67,15 @@ def recalc_group_severity():
 
 def update_package_cache():
     print('  -> Querying alpm database...', end='', flush=True)
-    packages = search('', filter_duplicate_packages=False, sort_results=False)
+    packages = search('', filter_duplicate_packages=False, sort_results=False, force_fresh_handle=True)
+    if not packages:
+        raise ValueError('Package refresh returned no packages; keeping the existing cache.')
     print('done')
-
-    if packages:
-        latest = max(packages, key=lambda pkg: pkg.builddate)
-        print('  -> Latest package: {} {} {}'.format(
-            latest.name, latest.version, datetime.fromtimestamp(latest.builddate).strftime('%c')))
 
     print('  -> Updating database cache...', end='', flush=True)
     new_packages = []
     for package in packages:
-        new_packages.append({
+        row = {
             'name': package.name,
             'base': package.base if package.base else package.name,
             'version': package.version,
@@ -88,8 +86,24 @@ def update_package_cache():
             'filename': package.filename,
             'sha256sum': package.sha256sum,
             'builddate': package.builddate
-        })
-    Package.query.delete()
-    db.session.bulk_insert_mappings(Package, new_packages)
-    db.session.commit()
+        }
+        required = ('name', 'base', 'version', 'arch', 'database', 'filename', 'sha256sum')
+        if any(not row[field] for field in required) or row['description'] is None or row['builddate'] is None:
+            raise ValueError('Incomplete package {}; keeping the existing cache.'.format(package.name))
+        new_packages.append(row)
+    latest = max(packages, key=lambda pkg: pkg.builddate)
+    print('  -> Latest package: {} {} {}'.format(
+        latest.name, latest.version, datetime.fromtimestamp(latest.builddate).strftime('%c')))
+    previous_repos = {repo for repo, in db.session.query(Package.database).distinct()}
+    refreshed_repos = {package['database'] for package in new_packages}
+    if previous_repos - refreshed_repos:
+        raise ValueError('Repositories missing from refresh: {}; keeping the existing cache.'
+                         .format(', '.join(sorted(previous_repos - refreshed_repos))))
+    try:
+        Package.query.delete()
+        db.session.bulk_insert_mappings(Package, new_packages)
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        raise
     print('done')
