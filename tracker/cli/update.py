@@ -1,6 +1,9 @@
+from click import ClickException
 from click import echo
 from click import option
 from click import pass_context
+from pyalpm import error as AlpmError
+from sqlalchemy.exc import SQLAlchemyError
 
 from .util import cli
 
@@ -21,7 +24,10 @@ def pacman(force):
     from tracker.pacman import update as update_pacman_db
 
     echo('Updating pacman database...', nl=False)
-    update_pacman_db(force=force)
+    try:
+        update_pacman_db(force=force)
+    except AlpmError as error:
+        raise ClickException('Repository refresh failed; cached package data is unchanged. {}'.format(error)) from error
     echo('done')
 
 
@@ -32,7 +38,10 @@ def cache():
     from tracker.maintenance import update_package_cache
 
     echo('Updating package cache...')
-    update_package_cache()
+    try:
+        update_package_cache()
+    except (AlpmError, ValueError, SQLAlchemyError) as error:
+        raise ClickException(str(error)) from error
 
 
 @update.command()

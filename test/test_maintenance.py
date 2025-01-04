@@ -1,9 +1,34 @@
 from importlib import import_module
+from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import inspect
 from sqlalchemy import text
 
+from tracker import maintenance
 from tracker.cli import cli
+from tracker.model import Package
+
+from .conftest import create_package
+
+
+@create_package(name='old')
+def test_package_refresh_preserves_cache_on_empty_or_broken_input(db, client, monkeypatch):
+    packages = []
+    monkeypatch.setattr(maintenance, 'search', lambda *args, **kwargs: packages)
+    with pytest.raises(ValueError, match='no packages'):
+        maintenance.update_package_cache()
+    assert Package.query.one().name == 'old'
+    package = SimpleNamespace(name='new', base='new', version='2-1', desc='', url=None,
+                              arch=None, db=SimpleNamespace(name='core'), filename='new.pkg',
+                              sha256sum='hash', builddate=1)
+    packages.append(package)
+    with pytest.raises(ValueError, match='Incomplete package'):
+        maintenance.update_package_cache()
+    assert Package.query.one().name == 'old'
+    package.arch = 'any'
+    maintenance.update_package_cache()
+    assert Package.query.one().name == 'new'
 
 
 def test_database_maintenance_commands(app, db, monkeypatch):
