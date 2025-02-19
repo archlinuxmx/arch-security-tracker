@@ -1,5 +1,3 @@
-from hashlib import sha256
-
 import pytest
 
 from tracker.model import CVE
@@ -34,7 +32,7 @@ def workflow_tokens(db):
 
 def match(client, path, headers):
     response = client.get(path)
-    return dict(headers, **{'If-Match': '"' + sha256(response.data).hexdigest() + '"'})
+    return dict(headers, **{'If-Match': response.headers['ETag']})
 
 
 @create_issue

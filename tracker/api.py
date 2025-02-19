@@ -5,6 +5,7 @@ import re
 from collections import defaultdict
 from datetime import datetime
 from functools import wraps
+from hashlib import sha256
 from urllib.parse import urlsplit
 
 from flask import Blueprint
@@ -88,8 +89,22 @@ def handle_internal_error(error):
 
 
 @api.after_request
-def no_cache(response):
-    response.headers['Cache-Control'] = 'no-store'
+def conditional_public_reads(response):
+    public_reads = {'list_cves', 'get_cve', 'list_packages', 'list_groups', 'get_group',
+                    'list_advisories', 'get_advisory', 'list_changes'}
+    if (request.method in ('GET', 'HEAD') and response.status_code == 200
+            and request.endpoint in {'api_v1.' + name for name in public_reads}):
+        # Hash the complete representation, including linked resources. The
+        # model's changed timestamp alone does not cover relationship edits.
+        etag = sha256(response.get_data()).hexdigest()
+        response.set_etag(etag)
+        response.headers['Cache-Control'] = 'public, no-cache'
+        if request.if_match and not request.if_match.contains(etag):
+            return error_response(APIError(412, 'precondition_failed', 'The requested representation changed.'))
+        if request.if_none_match.contains_weak(etag):
+            response.status_code = 304
+    else:
+        response.headers['Cache-Control'] = 'no-store'
     return response
 
 
