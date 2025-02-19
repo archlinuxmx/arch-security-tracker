@@ -4,12 +4,17 @@ import re
 
 from flask import jsonify
 from flask import request
+from sqlalchemy import func
 from sqlalchemy import or_
 from sqlalchemy.orm import selectinload
+from sqlalchemy_continuum import version_class
+from sqlalchemy_continuum import versioning_manager
 from werkzeug.exceptions import BadRequest
 from werkzeug.exceptions import NotFound
 
+from tracker import db
 from tracker.api import api
+from tracker.model import CVE
 from tracker.model import Advisory
 from tracker.model import CVEGroup
 from tracker.model import CVEGroupEntry
@@ -146,3 +151,62 @@ def get_advisory(name):
     if advisory is None:
         raise NotFound('Published advisory not found.')
     return jsonify(serialize_advisory(advisory))
+
+
+@api.route('/changes', methods=['GET'])
+def list_changes():
+    """Invalidate current resources from audited transactions, not changed dates."""
+    limit, after = page_parameters()
+    transaction = versioning_manager.transaction_cls
+    latest = db.session.query(func.max(transaction.id)).scalar() or 0
+    if after is None:
+        return jsonify(items=[], next_cursor=str(latest), has_more=False)
+    cursor = numeric_cursor(after)
+    if cursor > latest:
+        raise BadRequest('Cursor is ahead of this database; start a fresh synchronization.')
+    transactions = (db.session.query(transaction.id).filter(transaction.id > cursor)
+                    .order_by(transaction.id).limit(limit + 1).all())
+    if not transactions:
+        return jsonify(items=[], next_cursor=str(cursor), has_more=False)
+    end = transactions[min(len(transactions), limit) - 1][0]
+    versions = {}
+    for model in (CVE, CVEGroup, CVEGroupEntry, CVEGroupPackage, Advisory):
+        history = version_class(model)
+        versions[model] = (db.session.query(history).filter(history.transaction_id > cursor,
+                                                          history.transaction_id <= end).all())
+    cves = {row.id for row in versions[CVE]}
+    groups = {row.id for row in versions[CVEGroup]}
+    groups.update(row.group_id for row in versions[CVEGroupEntry] + versions[CVEGroupPackage])
+    cves.update(row.cve_id for row in versions[CVEGroupEntry])
+
+    # Historical links also cover deleted/replaced associations and cascades.
+    entry_history = version_class(CVEGroupEntry)
+    if cves:
+        groups.update(row[0] for row in db.session.query(entry_history.group_id)
+                      .filter(entry_history.cve_id.in_(cves)).distinct())
+    if groups:
+        cves.update(row[0] for row in db.session.query(entry_history.cve_id)
+                    .filter(entry_history.group_id.in_(groups)).distinct())
+
+    advisory_history = version_class(Advisory)
+    advisories = {row.id for row in versions[Advisory]}
+    if groups:
+        package_history = version_class(CVEGroupPackage)
+        package_ids = db.session.query(package_history.id).filter(package_history.group_id.in_(groups))
+        advisories.update(row[0] for row in db.session.query(advisory_history.id)
+                          .filter(advisory_history.group_package_id.in_(package_ids)).distinct())
+    # Never reveal a draft identifier. An earlier published advisory can be
+    # withdrawn or deleted, in which case clients must remove their cached copy.
+    advisories = {row[0] for row in db.session.query(advisory_history.id)
+                  .filter(advisory_history.id.in_(advisories),
+                          advisory_history.publication == Publication.published).distinct()}
+    current_cves = {row[0] for row in db.session.query(CVE.id).filter(CVE.id.in_(cves))}
+    current_groups = {row[0] for row in db.session.query(CVEGroup.id).filter(CVEGroup.id.in_(groups))}
+    current_advisories = {row[0] for row in db.session.query(Advisory.id)
+                         .filter(Advisory.id.in_(advisories), Advisory.publication == Publication.published)}
+    items = ([{'resource': 'cves', 'name': name, 'deleted': name not in current_cves} for name in sorted(cves)]
+             + [{'resource': 'groups', 'name': 'AVG-{}'.format(name), 'deleted': name not in current_groups}
+                for name in sorted(groups)]
+             + [{'resource': 'advisories', 'name': name, 'deleted': name not in current_advisories}
+                for name in sorted(advisories)])
+    return jsonify(items=items, next_cursor=str(end), has_more=len(transactions) > limit)

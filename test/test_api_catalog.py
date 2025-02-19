@@ -1,5 +1,6 @@
 from tracker.model import CVE
 from tracker.model import Advisory
+from tracker.model import CVEGroup
 from tracker.model.enum import Publication
 from tracker.model.enum import Severity
 
@@ -73,3 +74,85 @@ def test_advisories_hide_drafts(db, client):
     first = client.get('/api/v1/advisories?limit=1').get_json()
     assert first['next_cursor'] == 'ASA-202601-1'
     assert client.get('/api/v1/advisories?after=ASA-202601-1').get_json()['items'][0]['name'] == 'ASA-202601-2'
+
+
+@create_issue
+@create_group(id=1)
+@create_advisory(id='ASA-202601-1', publication=Publication.published)
+@create_group(id=2, packages=['bar'])
+@create_advisory(id='ASA-202601-2', group_package_id=2, impact='Draft')
+def test_change_feed_tracks_relationships_deletions_and_publication(db, client):
+    initial = client.get('/api/v1/changes').get_json()
+    assert initial['items'] == []
+    cursor = initial['next_cursor']
+    issue = CVE.query.one()
+    issue.notes = 'Browser-style update without changed maintenance'
+    CVEGroup.query.filter_by(id=1).one().packages[0].pkgname = 'foo-new'
+    # Remove the second group's link: the CVE must be invalidated as well.
+    CVEGroup.query.filter_by(id=2).one().issues = []
+    db.session.commit()
+    first = client.get('/api/v1/changes', query_string={'after': cursor, 'limit': 1}).get_json()
+    assert {'resource': 'cves', 'name': issue.id, 'deleted': False} in first['items']
+    assert {'resource': 'groups', 'name': 'AVG-2', 'deleted': False} in first['items']
+    assert {'resource': 'advisories', 'name': 'ASA-202601-1', 'deleted': False} in first['items']
+    assert all(item['name'] != 'ASA-202601-2' for item in first['items'])
+    published = Advisory.query.filter_by(id='ASA-202601-1').one()
+    db.session.delete(published)
+    db.session.delete(CVEGroup.query.filter_by(id=1).one())
+    db.session.delete(issue)
+    db.session.commit()
+    removed = client.get('/api/v1/changes', query_string={'after': first['next_cursor']}).get_json()
+    assert {'resource': 'cves', 'name': 'CVE-2016-1337', 'deleted': True} in removed['items']
+    assert {'resource': 'groups', 'name': 'AVG-1', 'deleted': True} in removed['items']
+    assert {'resource': 'advisories', 'name': 'ASA-202601-1', 'deleted': True} in removed['items']
+    assert client.get('/api/v1/changes', query_string={'after': removed['next_cursor']}).get_json()['items'] == []
+    assert client.get('/api/v1/changes?after=999999').status_code == 400
+
+
+@create_issue
+@create_group(id=1)
+def test_public_conditional_reads_follow_relationship_edits(db, client):
+    path = '/api/v1/cves/CVE-2016-1337'
+    first = client.get(path)
+    etag = first.headers['ETag']
+    assert first.headers['Cache-Control'] == 'public, no-cache'
+    unchanged = client.get(path, headers={'If-None-Match': etag})
+    assert unchanged.status_code == 304
+    assert unchanged.data == b''
+    group_path = '/api/v1/groups/AVG-1'
+    group_etag = client.get(group_path).headers['ETag']
+    CVEGroup.query.one().packages[0].pkgname = 'foo-new'
+    db.session.commit()
+    modified = client.get(path, headers={'If-None-Match': etag})
+    assert modified.status_code == 200
+    assert modified.headers['ETag'] != etag
+    assert modified.get_json()['packages'] == ['foo-new']
+    assert client.get(group_path).headers['ETag'] != group_etag
+    assert client.head(path).headers['ETag'] == modified.headers['ETag']
+    error = client.get('/api/v1/cves/CVE-2026-9999')
+    assert error.headers['Cache-Control'] == 'no-store'
+    assert 'ETag' not in error.headers
+    denied = client.post('/api/v1/cves', json={'name': 'CVE-2026-9999'})
+    assert denied.headers['Cache-Control'] == 'no-store'
+
+
+def test_public_read_preconditions_follow_etag_order(client):
+    path = '/api/v1/cves'
+    etag = client.get(path).headers['ETag']
+    for method in ('GET', 'HEAD'):
+        for value in ('*', etag, '"old", ' + etag):
+            response = client.open(path, method=method, headers={'If-Match': value})
+            assert response.status_code == 200
+        for headers in ({'If-None-Match': etag}, {'If-None-Match': 'W/' + etag},
+                        {'If-None-Match': '*'}, {'If-Match': etag, 'If-None-Match': etag}):
+            response = client.open(path, method=method, headers=headers)
+            assert response.status_code == 304
+            assert response.data == b''
+        for headers in ({'If-Match': '"old"'}, {'If-Match': 'W/' + etag},
+                        {'If-Match': '"old"', 'If-None-Match': etag}):
+            response = client.open(path, method=method, headers=headers)
+            assert response.status_code == 412
+            assert response.headers['Cache-Control'] == 'no-store'
+            assert 'ETag' not in response.headers
+            if method == 'GET':
+                assert response.get_json()['error']['code'] == 'precondition_failed'
