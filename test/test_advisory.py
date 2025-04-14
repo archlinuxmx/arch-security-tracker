@@ -1,5 +1,6 @@
 
 from collections import namedtuple
+from subprocess import run
 
 from flask import url_for
 from markupsafe import escape
@@ -12,6 +13,7 @@ from tracker.advisory import advisory_format_issue_listing
 from tracker.advisory import advisory_get_impact_from_text
 from tracker.advisory import advisory_get_label
 from tracker.advisory import advisory_get_workaround_from_text
+from tracker.advisory import generate_advisory
 from tracker.model.advisory import Advisory
 from tracker.model.cve import CVE
 from tracker.model.cve import issue_types
@@ -419,6 +421,29 @@ def test_advisory_format_issue_listing_raw(db, client):
     data = resp.data.decode()
     assert 'CVE-ID  : CVE-1111-1234  CVE-1111-12345  CVE-1234-11111 CVE-1234-11112\n' + \
            '          CVE-1234-12345 CVE-1234-123456\n' in data
+
+
+@mark.parametrize('fixed', [
+    '2.0-1', '2~rc1-1', '2$version-1', '2$(printf${IFS}expanded)-1',
+    '2`printf${IFS}expanded`-1', '2"quoted-1', "2'quoted-1", r'2\$version-1',
+    "2'\"$`\\-1",
+])
+@create_issue
+@create_group(fixed='1.1-1')
+@create_advisory
+def test_advisory_upgrade_command_preserves_version(db, client, fixed):
+    CVEGroup.query.one().fixed = fixed
+    db.session.commit()
+    content = generate_advisory(DEFAULT_ADVISORY_ID)
+    command = next(line[2:] for line in content.splitlines() if line.startswith('# pacman '))
+    # Exercise shell parsing with an inert argv printer, never the real pacman.
+    result = run(['/bin/sh', '-c', 'pacman() { printf "%s\\n" "$@"; }\n' + command],
+                 check=True, capture_output=True, text=True)
+    assert result.stdout.splitlines() == ['-Syu', 'foo>=' + fixed]
+    if fixed == '2.0-1':
+        with client.application.test_request_context():
+            html = generate_advisory(DEFAULT_ADVISORY_ID, raw=False)
+        assert '# pacman -Syu &#39;<a href="/package/foo" rel="noopener">foo</a>&gt;=2.0-1&#39;' in html
 
 
 def test_advisory_format_issue_listing():

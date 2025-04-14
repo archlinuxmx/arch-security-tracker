@@ -12,6 +12,7 @@ from tracker.model import CVEGroup
 from tracker.model import CVEGroupEntry
 from tracker.model import CVEGroupPackage
 from tracker.model.cve import cve_id_regex
+from tracker.model.cvegroup import valid_bug_ticket
 from tracker.model.cvegroup import vulnerability_group_regex
 from tracker.model.enum import status_to_affected
 from tracker.user import reporter_required
@@ -67,7 +68,7 @@ def copy_group(avg):
     form = GroupForm()
     form.advisory_qualified.data = group.advisory_qualified
     form.affected.data = group.affected
-    form.bug_ticket.data = group.bug_ticket
+    form.bug_ticket.data = group.bug_ticket if group.bug_ticket and valid_bug_ticket(group.bug_ticket) else ''
     form.cve.data = '\n'.join(issue_ids)
     form.fixed.data = group.fixed
     form.notes.data = group.notes

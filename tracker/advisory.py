@@ -5,6 +5,7 @@ from re import IGNORECASE
 from re import escape
 from re import search
 from re import sub
+from shlex import quote
 from urllib.parse import urlparse
 
 from flask import render_template
@@ -64,7 +65,8 @@ def generate_advisory(advisory_id, with_subject=True, raw=True):
 
     references = []
     if group.bug_ticket:
-        references.append(TRACKER_BUGTRACKER_URL.format(group.bug_ticket))
+        ticket = str(group.bug_ticket)
+        references.append(ticket if ticket.startswith('https://') else TRACKER_BUGTRACKER_URL.format(ticket))
     references.extend([ref for ref in multiline_to_list(group.reference)
                        if ref not in references])
     list(map(lambda issue: references.extend(
@@ -74,6 +76,7 @@ def generate_advisory(advisory_id, with_subject=True, raw=True):
                               advisory=advisory,
                               group=group,
                               package=package,
+                              upgrade_requirement=quote('{}>={}'.format(package.pkgname, group.fixed)),
                               issues=issues,
                               remote=remote,
                               issue_listing_formatted=issue_listing_formatted,

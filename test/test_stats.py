@@ -76,9 +76,9 @@ def test_stats_data_misc_users(db, client):
     assert 3 == data['users']['total']
 
 
-@create_group(id=1, bug_ticket=1337)
-@create_group(id=2, bug_ticket=1337)
-@create_group(id=3, bug_ticket=4242)
+@create_group(id=1, bug_ticket='https://gitlab.archlinux.org/archlinux/packaging/packages/foo/-/issues/1337')
+@create_group(id=2, bug_ticket='https://gitlab.archlinux.org/archlinux/packaging/packages/foo/-/issues/1337')
+@create_group(id=3, bug_ticket='https://gitlab.archlinux.org/archlinux/packaging/packages/foo/-/issues/4242')
 def test_stats_data_misc_ticket(db, client):
     resp = client.get(url_for('tracker.stats_json', suffix='.json'))
     assert ImATeapot.code == resp.status_code
