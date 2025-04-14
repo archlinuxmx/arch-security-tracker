@@ -9,7 +9,7 @@ from tracker import db
 class ApiToken(db.Model):
     NAME_LENGTH = 64
     SCOPE = 'cves:create'
-    SCOPES = ('cves:create', 'cves:update')
+    SCOPES = ('cves:create', 'cves:update', 'groups:create', 'groups:update')
     LIFETIME = timedelta(days=90)
 
     __tablename__ = 'api_token'

@@ -250,23 +250,8 @@ def valid_text(value, max_length):
     return True
 
 
-def validate_cve(data):
-    fields = {}
-    allowed = {'name', 'type', 'severity', 'vector', 'description', 'references', 'notes', 'cvss'}
-    cvss = {}
-    if 'cvss' in data:
-        try:
-            cvss = parse_cvss(data['cvss'])
-        except ValueError as error:
-            fields['cvss'] = [str(error)]
-    for name in sorted(set(data) - allowed):
-        fields[name] = ['Unknown or read-only field.']
-    if not valid_name(data.get('name')):
-        fields['name'] = ['A CVE identifier of at most 64 characters is required.']
-    for name, choices in [('type', issue_types), ('severity', Severity.__members__), ('vector', Remote.__members__)]:
-        value = data.get(name, 'unknown')
-        if not isinstance(value, str) or value not in choices:
-            fields[name] = ['Must be one of: {}.'.format(', '.join(choices))]
+def validate_content(data, fields):
+    """Validate shared public text and collect errors in fields."""
     for name, length in [('description', CVE.DESCRIPTION_LENGTH), ('notes', CVE.NOTES_LENGTH)]:
         value = data.get(name, '')
         if not valid_text(value, length):
@@ -291,12 +276,33 @@ def validate_cve(data):
         references = list(dict.fromkeys(references))
         if len('\n'.join(references)) > CVE.REFERENCES_LENGTH:
             fields['references'] = ['Joined references must not exceed {} characters.'.format(CVE.REFERENCES_LENGTH)]
+    return dict(description=data.get('description', ''), notes=data.get('notes', ''),
+                reference='\n'.join(references) if 'references' not in fields else '')
+
+
+def validate_cve(data):
+    fields = {}
+    allowed = {'name', 'type', 'severity', 'vector', 'description', 'references', 'notes', 'cvss'}
+    cvss = {}
+    if 'cvss' in data:
+        try:
+            cvss = parse_cvss(data['cvss'])
+        except ValueError as error:
+            fields['cvss'] = [str(error)]
+    for name in sorted(set(data) - allowed):
+        fields[name] = ['Unknown or read-only field.']
+    if not valid_name(data.get('name')):
+        fields['name'] = ['A CVE identifier of at most 64 characters is required.']
+    for name, choices in [('type', issue_types), ('severity', Severity.__members__), ('vector', Remote.__members__)]:
+        value = data.get(name, 'unknown')
+        if not isinstance(value, str) or value not in choices:
+            fields[name] = ['Must be one of: {}.'.format(', '.join(choices))]
+    content = validate_content(data, fields)
     if fields:
         raise APIError(422, 'validation_error', 'Invalid CVE fields.', fields)
     return dict(id=data['name'], issue_type=data.get('type', 'unknown'),
                 severity=Severity[data.get('severity', 'unknown')],
-                remote=Remote[data.get('vector', 'unknown')], description=data.get('description', ''),
-                reference='\n'.join(references), notes=data.get('notes', ''), **cvss)
+                remote=Remote[data.get('vector', 'unknown')], **content, **cvss)
 
 
 @api.route('/cves', methods=['POST'])
