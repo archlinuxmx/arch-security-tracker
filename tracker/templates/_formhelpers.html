@@ -101,7 +101,12 @@
 
 {%- macro bug_ticket(id) -%}
 	{%- if id -%}
+		{%- set value = id|string -%}
+		{%- if value.startswith('https://') -%}
+		<a href="{{ value }}">GitLab #{{ value.rsplit('/', 1)[1] }}</a>
+		{%- else -%}
 		<a href="https://bugs.archlinux.org/task/{{ id }}">FS#{{ id }}</a>
+		{%- endif -%}
 	{%- endif -%}
 {%- endmacro -%}
 

@@ -20,7 +20,12 @@
 							{{ render_field(form.status, class='full size', indent=7) }}
 						</div>
 						<div class="one-quarter column">
-							{{ render_field(form.bug_ticket, class='full size', placeholder='ID', indent=7) }}
+							{% if archived_ticket %}
+							<p>Archived ticket: {{ archived_ticket }}</p>
+							{{ render_checkbox(form.replace_ticket, indent=7) }}
+							<p>Check to replace or clear this reference.</p>
+							{% endif %}
+							{{ render_field(form.bug_ticket, class='full size', placeholder='Arch GitLab issue URL', maxlength=CVEGroup.BUG_TICKET_LENGTH, indent=7) }}
 						</div>
 						<div class="one-quarter column">
 							{{ render_field(form.affected, class='full size', placeholder='Package version', required='', indent=7) }}

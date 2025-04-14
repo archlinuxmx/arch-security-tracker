@@ -174,6 +174,17 @@ def affected_to_status(affected, pkgname, fixed_version):
     # otherwise a fixed version exists outside [testing]
     return Status.fixed
 
+
+def group_status(affected, pkgnames, fixed_version, previous_status=None):
+    names = [name for name, in db.session.query(Package.name)
+             .filter(Package.name.in_(pkgnames)).distinct()]
+    if names:
+        return min(affected_to_status(affected, name, fixed_version) for name in names)
+    if previous_status is not None and affected == status_to_affected(previous_status):
+        return previous_status
+    return affected_to_status(affected, None, fixed_version)
+
+
 def highest_severity(cves):
     severity = list(filter(lambda severity: Severity.unknown != severity, cves))
     return min(severity) if severity else Severity.unknown

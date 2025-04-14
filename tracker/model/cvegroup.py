@@ -1,4 +1,5 @@
 from datetime import datetime
+from re import fullmatch
 
 from tracker import db
 
@@ -6,14 +7,22 @@ from .enum import Severity
 from .enum import Status
 
 pkgname_regex = r'^([a-z\d@\.\_\+-]+)$'
-pkgver_regex = r'^(\d+:)?([\w]+[\._+]*)+\-\d+(\.\d+)?$'
+# Require printable ASCII; pkgver excludes colons, slashes and hyphens.
+pkgver_regex = r'^(?:[0-9]+:)?(?=[!-~]+\Z)[^:/-]+-[0-9]+(?:\.[0-9]+)?\Z'
 vulnerability_group_regex = r'^AVG-\d+$'
+bug_ticket_regex = (r'^https://gitlab\.archlinux\.org/archlinux/packaging/packages/'
+                    r'(?!\.{1,2}/)[a-z0-9_.-]+/-/issues/[1-9][0-9]*\Z')
+
+
+def valid_bug_ticket(value):
+    return bool(fullmatch(bug_ticket_regex, value))
 
 
 class CVEGroup(db.Model):
 
     REFERENCES_LENGTH = 4096
     NOTES_LENGTH = 4096
+    BUG_TICKET_LENGTH = 512
 
     __versioned__ = {}
     __tablename__ = 'cve_group'
@@ -23,7 +32,7 @@ class CVEGroup(db.Model):
     severity = db.Column(Severity.as_type(), nullable=False, default=Severity.unknown)
     affected = db.Column(db.String(32), nullable=False)
     fixed = db.Column(db.String(32))
-    bug_ticket = db.Column(db.String(9))
+    bug_ticket = db.Column(db.String(BUG_TICKET_LENGTH))
     reference = db.Column(db.String(REFERENCES_LENGTH))
     notes = db.Column(db.String(NOTES_LENGTH))
     created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)

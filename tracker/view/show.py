@@ -10,7 +10,6 @@ from sqlalchemy_continuum import version_class
 from sqlalchemy_continuum import versioning_manager
 
 from config import TRACKER_ADVISORY_URL
-from config import TRACKER_BUGTRACKER_URL
 from config import TRACKER_GROUP_URL
 from config import TRACKER_ISSUE_URL
 from config import TRACKER_LOG_ENTRIES_PER_PAGE

@@ -2,7 +2,6 @@ from flask import url_for
 from werkzeug.exceptions import Forbidden
 from werkzeug.exceptions import NotFound
 
-from config import TRACKER_BUGTRACKER_URL
 from tracker.model.cve import CVE
 from tracker.model.cve import issue_types
 from tracker.model.cvegroup import CVEGroup
@@ -27,7 +26,8 @@ from .util import AssertionHTMLParser
 
 
 def set_and_assert_group_data(db, client, route, pkgnames=['foo'], issues=['CVE-1234-1234', 'CVE-2222-2222'],
-                              affected='1.2.3-4', fixed='1.2.3-5', status=Affected.affected, bug_ticket='1234',
+                              affected='1.2.3-4', fixed='1.2.3-5', status=Affected.affected,
+                              bug_ticket='https://gitlab.archlinux.org/archlinux/packaging/packages/foo/-/issues/73',
                               reference='https://security.archlinux.org', notes='the cacke\nis\na\nlie',
                               advisory_qualified=False, database='core'):
     data = default_group_dict(dict(
@@ -58,7 +58,7 @@ def set_and_assert_group_data(db, client, route, pkgnames=['foo'], issues=['CVE-
     assert list(sorted(pkgnames)) == list(sorted([pkg.pkgname for pkg in group.packages]))
 
     if bug_ticket:
-        assert TRACKER_BUGTRACKER_URL.format(bug_ticket) in resp.data.decode('utf-8')
+        assert f'href="{bug_ticket}"' in resp.data.decode('utf-8')
     else:
         # Assert project and product category
         project = get_bug_project([database])
@@ -69,20 +69,27 @@ def set_and_assert_group_data(db, client, route, pkgnames=['foo'], issues=['CVE-
 @logged_in(role=UserRole.reporter)
 def test_reporter_can_add(db, client):
     resp = client.post(url_for('tracker.add_group'), follow_redirects=True,
-                       data=default_group_dict(dict(pkgnames='foo')))
+                       data=default_group_dict(dict(pkgnames='foo', affected='1:1.0~rc1-1', fixed='1:1.1-1')))
     assert 200 == resp.status_code
 
     group = CVEGroup.query.get(DEFAULT_GROUP_ID)
     assert DEFAULT_GROUP_ID == group.id
+    assert group.affected == '1:1.0~rc1-1'
 
 
 @create_package(name='foo')
-@create_group(packages=['foo'])
+@create_group(packages=['foo'], bug_ticket='1234')
 @logged_in(role=UserRole.reporter)
 def test_reporter_can_copy(db, client):
     resp = client.get(url_for('tracker.copy_group', avg=DEFAULT_GROUP_NAME), follow_redirects=True)
     assert 200 == resp.status_code
     assert ERROR_LOGIN_REQUIRED not in resp.data.decode()
+    field = next(line for line in resp.data.decode().splitlines() if 'name="bug_ticket"' in line)
+    assert 'value=""' in field
+    ticket = 'https://gitlab.archlinux.org/archlinux/packaging/packages/foo/-/issues/73'
+    CVEGroup.query.one().bug_ticket = ticket
+    db.session.commit()
+    assert f'value="{ticket}"' in client.get(url_for('tracker.copy_group', avg=DEFAULT_GROUP_NAME)).data.decode()
 
 
 @create_package(name='foo')
@@ -100,6 +107,11 @@ def test_add_implicit_issue_creation(db, client):
 @create_package(name='foo', version='1.2.3-4')
 @logged_in
 def test_add_group(db, client):
+    response = client.post(url_for('tracker.add_group'),
+                           data=default_group_dict(dict(pkgnames='foo', bug_ticket='1234')))
+    assert b'Use an Arch GitLab issue URL.' in response.data
+    assert CVEGroup.query.count() == 0
+    assert CVE.query.count() == 0
     set_and_assert_group_data(db, client, url_for('tracker.add_group'))
 
 

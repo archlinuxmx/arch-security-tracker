@@ -35,7 +35,7 @@ Resolution
 
 Upgrade to {{ group.fixed }}.
 
-# pacman -Syu "{{ package.pkgname }}>={{ group.fixed }}"
+# pacman -Syu {{ upgrade_requirement }}
 
 The problem{% if issues|length > 1 %}s have{% else %} has{% endif %} been fixed upstream
 {%- if upstream_released %} in version {{ upstream_version }}

@@ -9,6 +9,7 @@ from wtforms.validators import DataRequired
 from wtforms.validators import Length
 from wtforms.validators import Optional
 from wtforms.validators import Regexp
+from wtforms.validators import ValidationError
 
 from tracker.form.validators import SamePackageBase
 from tracker.form.validators import ValidIssues
@@ -16,6 +17,7 @@ from tracker.form.validators import ValidPackageNames
 from tracker.form.validators import ValidURLs
 from tracker.model.cvegroup import CVEGroup
 from tracker.model.cvegroup import pkgver_regex
+from tracker.model.cvegroup import valid_bug_ticket
 from tracker.model.enum import Affected
 
 from .base import BaseForm
@@ -27,7 +29,8 @@ class GroupForm(BaseForm):
     affected = StringField(u'Affected', validators=[DataRequired(), Regexp(pkgver_regex)])
     fixed = StringField(u'Fixed', validators=[Optional(), Regexp(pkgver_regex)])
     status = SelectField(u'Status', choices=[(e.name, e.label) for e in [*Affected]], validators=[DataRequired()])
-    bug_ticket = StringField('Bug ticket', validators=[Optional(), Regexp(r'^\d+$')])
+    bug_ticket = StringField('Bug ticket', validators=[Optional(), Length(max=CVEGroup.BUG_TICKET_LENGTH)])
+    replace_ticket = BooleanField('Replace archived ticket', default=False)
     reference = TextAreaField(u'References', validators=[Optional(), Length(max=CVEGroup.REFERENCES_LENGTH), ValidURLs()])
     notes = TextAreaField(u'Notes', validators=[Optional(), Length(max=CVEGroup.NOTES_LENGTH)])
     advisory_qualified = BooleanField(u'Advisory qualified', default=True, validators=[Optional()])
@@ -40,6 +43,10 @@ class GroupForm(BaseForm):
     def __init__(self, packages=[]):
         super().__init__()
         self.packages = packages
+
+    def validate_bug_ticket(self, field):
+        if not valid_bug_ticket(field.data):
+            raise ValidationError('Use an Arch GitLab issue URL.')
 
     def validate(self, **kwargs):
         rv = BaseForm.validate(self, kwargs)

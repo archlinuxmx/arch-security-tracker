@@ -4,6 +4,7 @@ from itertools import chain
 from flask import flash
 from flask import redirect
 from flask import render_template
+from flask import request
 from sqlalchemy import func
 from sqlalchemy.orm import contains_eager
 from sqlalchemy_continuum import version_class
@@ -24,6 +25,7 @@ from tracker.model import CVEGroupPackage
 from tracker.model.advisory import advisory_regex
 from tracker.model.advisory import advisory_types
 from tracker.model.cve import cve_id_regex
+from tracker.model.cvegroup import valid_bug_ticket
 from tracker.model.cvegroup import vulnerability_group_regex
 from tracker.model.enum import Affected
 from tracker.model.enum import Publication
@@ -262,6 +264,7 @@ def edit_group(avg):
         return forbidden()
 
     form = GroupForm(pkgnames)
+    archived_ticket = group.bug_ticket if group.bug_ticket and not valid_bug_ticket(group.bug_ticket) else None
     if not form.is_submitted():
         form.affected.data = group.affected
         form.fixed.data = group.fixed
@@ -269,7 +272,7 @@ def edit_group(avg):
         form.status.data = status_to_affected(group.status).name
         form.reference.data = group.reference
         form.notes.data = group.notes
-        form.bug_ticket.data = group.bug_ticket
+        form.bug_ticket.data = '' if archived_ticket else group.bug_ticket
         form.advisory_qualified.data = group.advisory_qualified and group.status is not Status.not_affected
         form.changed.data = str(group.changed)
         form.changed_latest.data = str(group.changed)
@@ -278,6 +281,9 @@ def edit_group(avg):
         form.cve.data = "\n".join(issue_ids)
 
     concurrent_modification = str(group.changed) != form.changed.data
+    ticket = group.bug_ticket
+    if 'bug_ticket' in request.form and (not archived_ticket or form.replace_ticket.data):
+        ticket = form.bug_ticket.data
 
     if not form.validate_on_submit() or (concurrent_modification and not
                                          (form.force_update.data and str(group.changed) == form.changed_latest.data)):
@@ -302,7 +308,7 @@ def edit_group(avg):
             group_new.reference_mod = group.reference != group_new.reference
             group_new.notes = form.notes.data
             group_new.notes_mod = group.notes != group_new.notes
-            group_new.bug_ticket = form.bug_ticket.data
+            group_new.bug_ticket = ticket
             group_new.bug_ticket_mod = group.bug_ticket != group_new.bug_ticket
             group_new.advisory_qualified = form.advisory_qualified.data
             group_new.advisory_qualified_mod = group.advisory_qualified != group_new.advisory_qualified
@@ -337,6 +343,7 @@ def edit_group(avg):
                                title='Edit {}'.format(avg),
                                form=form,
                                CVEGroup=CVEGroup,
+                               archived_ticket=archived_ticket,
                                group=group_new,
                                concurrent_modification=concurrent_modification,
                                can_watch_user_log=user_can_watch_user_log()), code
@@ -345,7 +352,7 @@ def edit_group(avg):
     group.affected = form.affected.data
     group.fixed = form.fixed.data
     group.status = affected_to_status(Affected.fromstring(form.status.data), pkgnames_edited[0], group.fixed)
-    group.bug_ticket = form.bug_ticket.data
+    group.bug_ticket = ticket
     group.reference = form.reference.data
     group.notes = form.notes.data
     group.advisory_qualified = form.advisory_qualified.data and group.status is not Status.not_affected
