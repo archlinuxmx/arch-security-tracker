@@ -37,3 +37,9 @@ Success returns `201`, the record and `Location`. A duplicate returns `409`
 without changing the record. After a conflict or timeout, GET and compare before retrying.
 
 Errors use `{"error": {"code": "...", "message": "..."}}`; field errors include `fields`.
+
+## Token scopes
+
+Tokens have one scope: `cves:create`, `cves:update`, `groups:create` or `groups:update`.
+Use a separate token for each operation. Existing tokens remain create-only.
+See [write workflows](api-workflow.md) for conditional edits and group creation.
