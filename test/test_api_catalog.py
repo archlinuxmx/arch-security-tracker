@@ -49,8 +49,8 @@ def test_group_reads(db, client):
     group = client.get('/api/v1/groups/AVG-1').get_json()
     assert group['packages'] == ['foo', 'foo-doc']
     assert group['cves'] == ['CVE-2016-1337']
-    assert group['assessment'] == 'unknown'
-    assert client.get('/api/v1/groups?package=foo&cve=CVE-2016-1337&status=unknown').get_json()['items'] == [group]
+    assert group['assessment'] == 'affected'
+    assert client.get('/api/v1/groups?package=foo&cve=CVE-2016-1337&status=vulnerable').get_json()['items'] == [group]
     assert client.get('/api/v1/groups/AVG-3').status_code == 404
 
 

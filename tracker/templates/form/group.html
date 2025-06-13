@@ -2,7 +2,7 @@
 {% block content %}
 			<h1>{{ title }}</h1>
 			<div class="wide size">
-				{%- if concurrent_modification %}
+				{%- if group %}
 				{%- include 'log/group_log_table.html' %}
 				{%- endif %}
 				<form action="{{ action }}" method="post" name="add">

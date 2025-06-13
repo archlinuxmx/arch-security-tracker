@@ -11,6 +11,7 @@ from tracker.model import Advisory
 from tracker.model import CVEGroup
 from tracker.model import CVEGroupEntry
 from tracker.model import CVEGroupPackage
+from tracker.model import Package
 from tracker.model import User
 from tracker.model.cve import issue_types
 from tracker.model.enum import Remote
@@ -72,36 +73,38 @@ def get_stats_data():
     data_issues['type']['total']['total'] = len(issues)
 
     for cve, groups in issue_groups.items():
+        issue_type = cve.issue_type or 'unknown'
         groups = list(filter(lambda group: group, groups))
         group_status = [group.status.open() for group in groups]
         vulnerable = any(group_status)
         data_issues['severity']['total'][cve.severity.name] += 1
-        data_issues['type']['total'][cve.issue_type] += 1
+        data_issues['type']['total'][issue_type] += 1
 
         if vulnerable:
             data_issues['severity']['vulnerable']['total'] += 1
             data_issues['severity']['vulnerable'][cve.severity.name] += 1
             data_issues['type']['vulnerable']['total'] += 1
-            data_issues['type']['vulnerable'][cve.issue_type] += 1
-        else:
+            data_issues['type']['vulnerable'][issue_type] += 1
+        elif groups:
             data_issues['severity']['fixed']['total'] += 1
             data_issues['severity']['fixed'][cve.severity.name] += 1
             data_issues['type']['fixed']['total'] += 1
-            data_issues['type']['fixed'][cve.issue_type] += 1
+            data_issues['type']['fixed'][issue_type] += 1
 
         if Remote.local == cve.remote:
             data_issues['type']['local']['total'] += 1
-            data_issues['type']['local'][cve.issue_type] += 1
+            data_issues['type']['local'][issue_type] += 1
             data_issues['severity']['local']['total'] += 1
             data_issues['severity']['local'][cve.severity.name] += 1
         elif Remote.remote == cve.remote:
             data_issues['type']['remote']['total'] += 1
-            data_issues['type']['remote'][cve.issue_type] += 1
+            data_issues['type']['remote'][issue_type] += 1
             data_issues['severity']['remote']['total'] += 1
             data_issues['severity']['remote'][cve.severity.name] += 1
 
     data_issues['severity']['total']['total'] = len(issues)
     data_issues['total'] = len(issues)
+    data_issues['unassessed'] = sum(1 for groups in issue_groups.values() if not any(groups))
 
     # groups
     groups = CVEGroup.query.all()
@@ -124,6 +127,10 @@ def get_stats_data():
     data_groups['severity']['fixed']['total'] = len(list(filter(lambda group: group.status.resolved(), groups)))
     data_groups['severity']['total']['total'] = len(groups)
     data_groups['total'] = len(groups)
+    available_groups = {group_id for group_id, in db.session.query(CVEGroupPackage.group_id)
+                        .join(Package, Package.name == CVEGroupPackage.pkgname).distinct()}
+    data_groups['open_in_repositories'] = sum(group.status.open() and group.id in available_groups for group in groups)
+    data_groups['open_removed'] = sum(group.status.open() and group.id not in available_groups for group in groups)
 
     # tickets
     data_tickets = OrderedDict()

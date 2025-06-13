@@ -2,13 +2,16 @@ from flask import url_for
 from werkzeug.exceptions import Forbidden
 from werkzeug.exceptions import NotFound
 
+from tracker.model.advisory import Advisory
 from tracker.model.cve import CVE
 from tracker.model.cve import issue_types
 from tracker.model.cvegroup import CVEGroup
 from tracker.model.enum import Affected
+from tracker.model.enum import Publication
 from tracker.model.enum import Status
 from tracker.model.enum import UserRole
 from tracker.model.enum import affected_to_status
+from tracker.model.package import Package
 from tracker.view.add import ERROR_GROUP_WITH_ISSUE_EXISTS
 from tracker.view.show import get_bug_project
 
@@ -120,6 +123,85 @@ def test_add_group(db, client):
 @logged_in
 def test_edit_group(db, client):
     set_and_assert_group_data(db, client, url_for('tracker.edit_group', avg=DEFAULT_GROUP_NAME))
+
+
+@create_package(name='alpha', base='shared', version='2.0-1')
+@create_package(name='zeta', base='shared', version='1.0-1')
+@logged_in
+def test_browser_group_status_considers_each_package(db, client):
+    data = default_group_dict(dict(pkgnames='alpha\nzeta', affected='1.0-1',
+                                   fixed='2.0-1', status=Affected.affected.name))
+    assert client.post('/avg/add', data=data).status_code == 302
+    group = CVEGroup.query.one()
+    assert group.status == Status.vulnerable
+
+    package = Package.query.filter_by(name='zeta').one()
+    package.version = '2.0-1'
+    package.database = 'extra-testing'
+    db.session.commit()
+    data.update(changed=str(group.changed), notes='One package is only fixed in testing')
+    assert client.post('/{}/edit'.format(group.name), data=data).status_code == 302
+    assert group.status == Status.testing
+
+    package.database = 'extra'
+    db.session.commit()
+    data.update(changed=str(group.changed), notes='Both packages are fixed')
+    assert client.post('/{}/edit'.format(group.name), data=data).status_code == 302
+    assert group.status == Status.fixed
+
+
+@create_package(name='foo', version='2.0-1')
+@create_group(packages=['foo'], affected='1.0-1', fixed='2.0-1')
+@logged_in
+def test_group_conflict_previews_the_derived_status(db, client):
+    group = CVEGroup.query.one()
+    data = default_group_dict(dict(pkgnames='foo', affected=group.affected, fixed=group.fixed,
+                                   status=Affected.affected.name, changed=str(group.changed),
+                                   notes='My notes'))
+    group.notes = 'A concurrent edit'
+    db.session.commit()
+    path = '/{}/edit'.format(group.name)
+    response = client.post(path, data=data)
+    assert response.status_code == 409
+    assert b'<td>Status</td>' not in response.data
+
+    data['fixed'] = '3.0-1'
+    response = client.post(path, data=data)
+    assert response.status_code == 409
+    assert b'<td>Status</td>' in response.data
+    assert b'<td>Vulnerable</td>' in response.data
+    data.update(fixed='2.0-1', status=Affected.not_affected.name, advisory_qualified=True)
+    response = client.post(path, data=data)
+    assert response.status_code == 409
+    assert b'<td>Advisory qualified</td>' in response.data
+    assert group.status == Status.fixed
+    assert group.fixed == '2.0-1'
+    assert group.notes == 'A concurrent edit'
+
+
+@create_package(name='foo', version='2.0-1')
+@create_group(packages=['foo'], affected='1.0-1', fixed='2.0-1')
+@logged_in
+def test_group_conflict_keeps_invalid_cves_in_the_form(db, client):
+    group = CVEGroup.query.one()
+    data = default_group_dict(dict(pkgnames='foo', affected=group.affected, fixed=group.fixed,
+                                   changed=str(group.changed), notes='My notes'))
+    group.notes = 'A concurrent edit'
+    db.session.commit()
+    current_changed = group.changed
+    data.update(changed_latest=str(current_changed), force_update=True)
+
+    for value in ('not-a-CVE', 'CVE-2026-nope'):
+        data['cve'] = value
+        response = client.post('/{}/edit'.format(group.name), data=data)
+        assert response.status_code == 409
+        assert b'Invalid issue' in response.data
+        assert b'The remote data has changed!' in response.data
+        assert value.encode() in response.data
+        assert b'<td>Issues</td>' not in response.data
+        assert group.notes == 'A concurrent edit'
+        assert group.changed == current_changed
+        assert [entry.cve_id for entry in group.issues] == [DEFAULT_ISSUE_ID]
 
 
 @create_package(name='foo', version='1.2.3-4')
@@ -403,6 +485,14 @@ def test_affected_to_status_testing_only(db, client):
     avg = CVEGroup.query.get(DEFAULT_GROUP_ID)
     status = affected_to_status(Affected.affected, 'foo', avg.fixed)
     assert status == Status.testing
+    from tracker.model import Package
+    testing = Package.query.filter_by(name='foo').one()
+    stable = Package(**{column.name: getattr(testing, column.name)
+                        for column in Package.__table__.columns if column.name != 'id'})
+    stable.database = 'core'
+    db.session.add(stable)
+    db.session.commit()
+    assert affected_to_status(Affected.affected, 'foo', avg.fixed) == Status.fixed
 
 @create_package(name='foo', version='1.2.3-3', database='extra')
 @create_package(name='foo', version='1.2.3-4', database='extra-testing')
@@ -430,7 +520,7 @@ def test_affected_to_status_not_affected(db, client):
 def test_affected_to_status_unknown_package(db, client):
     avg = CVEGroup.query.get(DEFAULT_GROUP_ID)
     status = affected_to_status(Affected.affected, 'foo', avg.fixed)
-    assert status == Status.unknown
+    assert status == Status.vulnerable
 
 
 @create_package(name='foopkg', version='1.2.3-4')
@@ -446,6 +536,16 @@ def test_edit_group_non_relational_field_updates_changed_date(db, client):
 
     group = CVEGroup.query.get(DEFAULT_GROUP_ID)
     assert group.changed > group_changed_old
+
+    Package.query.delete()
+    group.status = Status.fixed
+    group.fixed = '1.2.3-4'
+    db.session.commit()
+    data = default_group_dict(dict(status=Affected.affected.name, fixed=group.fixed,
+                                   changed=str(group.changed), notes='Removed package notes'))
+    resp = client.post(url_for('tracker.edit_group', avg=DEFAULT_GROUP_NAME), data=data)
+    assert resp.status_code == 302
+    assert group.status == Status.fixed
 
 
 @create_package(name='foopkg', version='1.2.3-4')
@@ -477,6 +577,20 @@ def test_edit_group_relational_field_packages_updates_changed_date(db, client):
 
     group = CVEGroup.query.get(DEFAULT_GROUP_ID)
     assert group.changed > group_changed_old
+
+    package = next(package for package in group.packages if package.pkgname == 'foopkg')
+    advisory = db.create(Advisory, id=DEFAULT_ADVISORY_ID, group_package=package)
+    db.session.commit()
+    for publication in (Publication.scheduled, Publication.published):
+        advisory.publication = publication
+        db.session.commit()
+        data.update(pkgnames='foopkg2', changed=str(group.changed), notes='Keep this input')
+        response = client.post('/{}/edit'.format(group.name), data=data)
+        assert response.status_code == 409
+        assert b'Cannot remove a package with an advisory.' in response.data
+        assert b'Keep this input' in response.data
+        assert {package.pkgname for package in group.packages} == {'foopkg', 'foopkg2'}
+        assert group.notes == ''
 
 
 @create_package(name='foopkg', version='1.2.3-4')
