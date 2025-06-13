@@ -25,7 +25,10 @@ def update_group_status():
                 .group_by(CVEGroupPackage.group_id)).all()
     for group, pkgnames in groups:
         pkgnames = pkgnames.split(' ')
-        new_status = affected_to_status(status_to_affected(group.status), pkgnames[0], group.fixed)
+        package = Package.query.filter(Package.name.in_(pkgnames)).order_by(Package.name).first()
+        if package is None:
+            continue
+        new_status = affected_to_status(status_to_affected(group.status), package.name, group.fixed)
         if group.status is not new_status:
             updated.append(dict(group=group, old_status=group.status))
         group.status = new_status
@@ -40,7 +43,10 @@ def recalc_group_status():
                 .group_by(CVEGroupPackage.group_id)).all()
     for group, pkgnames in groups:
         pkgnames = pkgnames.split(' ')
-        new_status = affected_to_status(status_to_affected(group.status), pkgnames[0], group.fixed)
+        package = Package.query.filter(Package.name.in_(pkgnames)).order_by(Package.name).first()
+        if package is None:
+            continue
+        new_status = affected_to_status(status_to_affected(group.status), package.name, group.fixed)
         if group.status is not new_status:
             updated.append(dict(group=group, old_status=group.status))
         group.status = new_status

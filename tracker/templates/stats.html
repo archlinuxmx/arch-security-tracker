@@ -3,6 +3,10 @@
 {% block content %}
 			<h1>Stats</h1>
 			<h2>Status</h2>
+            <p>Open groups: {{ groups.open_in_repositories }} with packages in repositories;
+                {{ groups.open_removed }} with all packages removed.
+                <a href="{{ url_for('tracker.index_vulnerable', include_removed=1) }}">Show both</a>.</p>
+            <p>{{ issues.unassessed }} CVEs have no package assessment and are not counted as fixed.</p>
 			<table class="styled-table stats-table column-major full size">
 				<thead>
 					<tr>

@@ -2,6 +2,7 @@
 from flask import url_for
 from werkzeug.exceptions import ImATeapot
 
+from tracker.model.cve import CVE
 from tracker.model.cve import issue_types
 from tracker.model.enum import Remote
 from tracker.model.enum import Severity
@@ -110,12 +111,13 @@ def test_stats_data_status_issues(db, client):
 
     data = resp.get_json()
 
-    assert 1 == data['issues']['severity']['fixed'][Severity.unknown.name]
-    assert 2 == data['issues']['severity']['fixed'][Severity.low.name]
-    assert 3 == data['issues']['severity']['fixed'][Severity.medium.name]
-    assert 4 == data['issues']['severity']['fixed'][Severity.high.name]
-    assert 5 == data['issues']['severity']['fixed'][Severity.critical.name]
-    assert sum(list(range(1, 6))) == data['issues']['severity']['fixed']['total']
+    assert 0 == data['issues']['severity']['fixed'][Severity.unknown.name]
+    assert 0 == data['issues']['severity']['fixed'][Severity.low.name]
+    assert 0 == data['issues']['severity']['fixed'][Severity.medium.name]
+    assert 0 == data['issues']['severity']['fixed'][Severity.high.name]
+    assert 0 == data['issues']['severity']['fixed'][Severity.critical.name]
+    assert 0 == data['issues']['severity']['fixed']['total']
+    assert 15 == data['issues']['unassessed']
 
     assert 6 == data['issues']['severity']['vulnerable'][Severity.unknown.name]
     assert 7 == data['issues']['severity']['vulnerable'][Severity.low.name]
@@ -179,10 +181,10 @@ def test_stats_data_type_issues(db, client):
 
     data = resp.get_json()
 
-    assert 1 == data['issues']['type']['fixed'][issue_types[0]]
+    assert 0 == data['issues']['type']['fixed'][issue_types[0]]
     assert 1 == data['issues']['type']['vulnerable'][issue_types[0]]
 
-    assert 1 == data['issues']['type']['fixed'][issue_types[1]]
+    assert 0 == data['issues']['type']['fixed'][issue_types[1]]
     assert 0 == data['issues']['type']['vulnerable'][issue_types[1]]
 
     assert 1 == data['issues']['type']['fixed'][issue_types[2]]
@@ -195,12 +197,26 @@ def test_stats_data_type_issues(db, client):
     assert 0 == data['issues']['type']['vulnerable'][issue_types[6]]
 
     assert 2 == data['issues']['type']['vulnerable']['total']
-    assert 3 == data['issues']['type']['fixed']['total']
+    assert 1 == data['issues']['type']['fixed']['total']
+    assert 2 == data['issues']['unassessed']
 
     assert 5 == data['issues']['type']['total']['total']
     assert 2 == data['issues']['type']['total'][issue_types[0]]
     assert 1 == data['issues']['type']['total'][issue_types[2]]
     assert 0 == data['issues']['type']['total'][issue_types[6]]
+
+    issues = CVE.query.order_by(CVE.id).all()
+    for issue in issues:
+        issue.issue_type = None
+    issues[0].remote = Remote.local
+    issues[1].remote = Remote.remote
+    db.session.commit()
+    response = client.get('/stats.json')
+    assert response.status_code == ImATeapot.code
+    counts = response.get_json()['issues']['type']
+    for category, count in (('total', 5), ('vulnerable', 2), ('fixed', 1), ('local', 1), ('remote', 1)):
+        assert counts[category]['unknown'] == counts[category]['total'] == count
+    assert all(issue.issue_type is None for issue in CVE.query.all())
 
 
 @create_package(name='rick', version='1.3-7')
@@ -228,3 +244,31 @@ def test_stats_data_type_advisories(db, client):
     assert 0 == data['advisories']['type'][issue_types[3]]
     assert 2 == data['advisories']['type']['multiple issues']
     assert 4 == data['advisories']['total']
+
+
+@create_group(id=99, packages=['removed'], status=Status.vulnerable)
+@create_package(name='zzz-present', version='2-1')
+def test_removed_package_is_visible_without_changing_assessment(db, client):
+    from tracker.maintenance import recalc_group_status
+    from tracker.maintenance import update_group_status
+    from tracker.model import CVEGroup
+    from tracker.model import CVEGroupPackage
+    from tracker.model.enum import Affected
+    from tracker.model.enum import affected_to_status
+
+    assert affected_to_status(Affected.affected, 'removed', None) == Status.vulnerable
+    recalc_group_status()
+    assert CVEGroup.query.get(99).status == Status.vulnerable
+    assert b'AVG-99' not in client.get('/issues').data
+    page = client.get('/issues?include_removed=1').data
+    assert b'AVG-99' in page and b'(removed)' in page
+    groups = client.get('/stats.json').get_json()['groups']
+    assert groups['open_removed'] == 1 and groups['open_in_repositories'] == 0
+    group = CVEGroup.query.get(99)
+    group.packages.append(CVEGroupPackage(pkgname='zzz-present'))
+    group.fixed = '2-1'
+    db.session.commit()
+    update_group_status()
+    assert group.status == Status.fixed
+    recalc_group_status()
+    assert group.status == Status.fixed

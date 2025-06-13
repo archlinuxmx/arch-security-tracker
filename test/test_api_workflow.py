@@ -7,6 +7,7 @@ from tracker.model import Package
 from tracker.model.apitoken import ApiToken
 from tracker.model.enum import Publication
 from tracker.model.enum import Severity
+from tracker.model.enum import Status
 from tracker.model.enum import UserRole
 from tracker.model.user import User
 
@@ -132,8 +133,9 @@ def test_group_status_covers_every_tracked_package(db, client, workflow_tokens):
 
 
 @create_package(name='foo', version='2.0-1')
+@create_package(name='foo-doc', base='foo', version='2.0-1')
 @create_issue
-@create_group(reference='ftp://example.org/legacy-advisory', bug_ticket='1234')
+@create_group(packages=['foo', 'foo-doc'], reference='ftp://example.org/legacy-advisory', bug_ticket='1234')
 def test_group_update_validates_versions_and_keeps_relationships(db, client, workflow_tokens):
     path = '/api/v1/groups/AVG-1'
     headers = match(client, path, workflow_tokens['groups:update'])
@@ -166,6 +168,23 @@ def test_group_update_validates_versions_and_keeps_relationships(db, client, wor
     response = client.patch(path, json={'references': ['https://example.org/fix']}, headers=fresh)
     assert response.status_code == 200
     assert response.get_json()['references'] == ['https://example.org/fix']
+    for name in ('foo', 'foo-doc'):
+        db.session.delete(Package.query.filter_by(name=name).one())
+        db.session.commit()
+        fresh = match(client, path, workflow_tokens['groups:update'])
+        response = client.patch(path, json={'notes': name + ' removed'}, headers=fresh)
+        assert response.status_code == 200
+        assert response.get_json()['status'] == 'fixed'
+    CVEGroup.query.one().status = Status.testing
+    db.session.commit()
+    fresh = match(client, path, workflow_tokens['groups:update'])
+    response = client.patch(path, json={'notes': 'Keep last known status'}, headers=fresh)
+    assert response.status_code == 200
+    assert response.get_json()['status'] == 'testing'
+    fresh = match(client, path, workflow_tokens['groups:update'])
+    response = client.patch(path, json={'fixed': None}, headers=fresh)
+    assert response.status_code == 200
+    assert response.get_json()['status'] == 'vulnerable'
     fresh = match(client, path, workflow_tokens['groups:update'])
     response = client.patch(path, json={'assessment': 'not_affected'}, headers=fresh)
     assert response.status_code == 200

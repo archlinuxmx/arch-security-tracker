@@ -16,7 +16,7 @@ from tracker.model.enum import Affected
 from tracker.model.enum import Remote
 from tracker.model.enum import Severity
 from tracker.model.enum import Status
-from tracker.model.enum import affected_to_status
+from tracker.model.enum import group_status
 from tracker.model.enum import highest_severity
 from tracker.user import reporter_required
 from tracker.user import user_can_edit_issue
@@ -195,7 +195,7 @@ def add_group():
 
     fixed = form.fixed.data
     affected = Affected.fromstring(form.status.data)
-    status = affected_to_status(affected, pkgnames[0], fixed)
+    status = group_status(affected, pkgnames, fixed)
     severity = highest_severity([issue.severity for issue in existing_issues])
     advisory_qualified = form.advisory_qualified.data and status is not Status.not_affected
 

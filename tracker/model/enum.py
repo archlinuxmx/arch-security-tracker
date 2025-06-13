@@ -156,12 +156,11 @@ def affected_to_status(affected, pkgname, fixed_version):
         return Status.not_affected
     if Affected.unknown == affected:
         return Status.unknown
-    versions = db.session.query(Package).filter_by(name=pkgname) \
-        .group_by(Package.name, Package.version).all()
+    versions = db.session.query(Package).filter_by(name=pkgname).all()
     versions = sort_packages(versions)
-    # unknown if no version was found
+    # Repository removal does not change an explicitly affected assessment.
     if not versions:
-        return Status.unknown
+        return Status.vulnerable
     version = versions[0]
     # vulnerable if the latest version is still affected
     if not fixed_version or 0 > vercmp(version.version, fixed_version):
@@ -185,6 +184,6 @@ def group_status(affected, pkgnames, fixed_version, previous_status=None):
     return affected_to_status(affected, None, fixed_version)
 
 
-def highest_severity(cves):
-    severity = list(filter(lambda severity: Severity.unknown != severity, cves))
-    return min(severity) if severity else Severity.unknown
+def highest_severity(severities):
+    known = [severity for severity in severities if severity != Severity.unknown]
+    return min(known, default=Severity.unknown)

@@ -66,10 +66,12 @@ def get_index_data(only_vulnerable=False, only_in_repo=True, group_ids=None):
 def index(only_vulnerable=True):
     page = page_number(request.args.get('page', 1), 50)
     sort = request.args.get('sort', 'priority')
+    include_removed = request.args.get('include_removed') == '1'
     if sort not in ('priority', 'created', 'changed'):
         abort(400)
-    query = (CVEGroup.query.join(CVEGroupEntry).join(CVEGroupPackage)
-             .join(Package, Package.name == CVEGroupPackage.pkgname))
+    query = CVEGroup.query.join(CVEGroupEntry).join(CVEGroupPackage)
+    if not include_removed:
+        query = query.join(Package, Package.name == CVEGroupPackage.pkgname)
     if only_vulnerable:
         query = query.filter(CVEGroup.status.in_([Status.unknown, Status.vulnerable, Status.testing]))
     if sort == 'priority':
@@ -81,11 +83,16 @@ def index(only_vulnerable=True):
     pagination = query.group_by(CVEGroup.id).order_by(CVEGroup.id.desc()).paginate(
         page=page, per_page=50, error_out=True)
     group_ids = [group.id for group in pagination.items]
-    groups = {entry['group'].id: entry for entry in get_index_data(only_vulnerable, group_ids=group_ids)}
+    groups = {entry['group'].id: entry for entry in get_index_data(only_vulnerable, only_in_repo=False,
+                                                                  group_ids=group_ids)}
+    package_names = {name for entry in groups.values() for name in entry['pkgs']}
+    available = {name for name, in db.session.query(Package.name).filter(Package.name.in_(package_names))}
+    for entry in groups.values():
+        entry['removed_packages'] = set(entry['pkgs']) - available
     return render_template('index.html',
                            title='Issues' if not only_vulnerable else 'Vulnerable issues',
                            entries=[groups[group_id] for group_id in group_ids],
-                           pagination=pagination, sort=sort,
+                           pagination=pagination, sort=sort, include_removed=include_removed,
                            only_vulnerable=only_vulnerable)
 
 

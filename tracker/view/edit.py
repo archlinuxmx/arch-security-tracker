@@ -32,7 +32,7 @@ from tracker.model.enum import Publication
 from tracker.model.enum import Remote
 from tracker.model.enum import Severity
 from tracker.model.enum import Status
-from tracker.model.enum import affected_to_status
+from tracker.model.enum import group_status
 from tracker.model.enum import highest_severity
 from tracker.model.enum import status_to_affected
 from tracker.user import reporter_required
@@ -281,28 +281,45 @@ def edit_group(avg):
         form.cve.data = "\n".join(issue_ids)
 
     concurrent_modification = str(group.changed) != form.changed.data
+
+    form_valid = form.validate_on_submit()
+    pkgnames_edited = multiline_to_list(form.pkgnames.data)
+    assessment = Affected.fromstring(form.status.data)
+    previous_status = group.status if form.fixed.data == group.fixed else None
+    status = group.status
+    if form_valid:
+        status = group_status(assessment, pkgnames_edited, form.fixed.data, previous_status)
+    advisory_qualified = form.advisory_qualified.data and status is not Status.not_affected
     ticket = group.bug_ticket
     if 'bug_ticket' in request.form and (not archived_ticket or form.replace_ticket.data):
         ticket = form.bug_ticket.data
+    removes_advisory_package = form_valid and any(
+        advisory.group_package.pkgname not in pkgnames_edited for advisory in advisories)
+    if removes_advisory_package:
+        form.pkgnames.errors.append('Cannot remove a package with an advisory.')
 
-    if not form.validate_on_submit() or (concurrent_modification and not
+    if not form_valid or removes_advisory_package or (concurrent_modification and not
                                          (form.force_update.data and str(group.changed) == form.changed_latest.data)):
         if advisories:
             flash('WARNING: This is referenced by an already published advisory!', 'warning')
 
         group_new = None
-        code = 200
+        code = Conflict.code if removes_advisory_package else 200
         if concurrent_modification:
             flash('WARNING: The remote data has changed!', 'warning')
             code = Conflict.code
 
+            form.force_update.data = False
+            form.changed_latest.data = str(group.changed)
+
+        if concurrent_modification and form_valid:
             group_new = CVEGroup()
             group_new.id = group.id
             group_new.affected = form.affected.data
             group_new.affected_mod = group.affected != group_new.affected
             group_new.fixed = form.fixed.data
             group_new.fixed_mod = group.fixed != group_new.fixed
-            group_new.status = Affected.fromstring(form.status.data)
+            group_new.status = status
             group_new.status_mod = group.status != group_new.status
             group_new.reference = form.reference.data
             group_new.reference_mod = group.reference != group_new.reference
@@ -310,7 +327,7 @@ def edit_group(avg):
             group_new.notes_mod = group.notes != group_new.notes
             group_new.bug_ticket = ticket
             group_new.bug_ticket_mod = group.bug_ticket != group_new.bug_ticket
-            group_new.advisory_qualified = form.advisory_qualified.data
+            group_new.advisory_qualified = advisory_qualified
             group_new.advisory_qualified_mod = group.advisory_qualified != group_new.advisory_qualified
 
             group_new.packages = []
@@ -324,10 +341,6 @@ def edit_group(avg):
                 entry = CVEGroupEntry()
                 entry.cve_id = cve
                 group_new.issues.append(entry)
-
-            if form.changed_latest.data != group.changed:
-                form.force_update.data = False
-            form.changed_latest.data = str(group.changed)
 
             Transaction = versioning_manager.transaction_cls
             VersionClassCVEGroup = version_class(CVEGroup)
@@ -348,14 +361,13 @@ def edit_group(avg):
                                concurrent_modification=concurrent_modification,
                                can_watch_user_log=user_can_watch_user_log()), code
 
-    pkgnames_edited = multiline_to_list(form.pkgnames.data)
     group.affected = form.affected.data
     group.fixed = form.fixed.data
-    group.status = affected_to_status(Affected.fromstring(form.status.data), pkgnames_edited[0], group.fixed)
+    group.status = status
     group.bug_ticket = ticket
     group.reference = form.reference.data
     group.notes = form.notes.data
-    group.advisory_qualified = form.advisory_qualified.data and group.status is not Status.not_affected
+    group.advisory_qualified = advisory_qualified
 
     cve_ids = multiline_to_list(form.cve.data)
     cve_ids = set(filter(lambda s: s.startswith('CVE-'), cve_ids))
@@ -398,7 +410,7 @@ def edit_group(avg):
         flash('Added {}'.format(pkgname))
 
     # update scheduled advisories
-    for advisory in advisories:
+    for advisory in advisories if issues_changed else []:
         if Publication.published == advisory.publication:
             continue
         issue_type = 'multiple issues' if len(set([issue.issue_type for issue in issues_final])) > 1 else next(iter(issues_final)).issue_type

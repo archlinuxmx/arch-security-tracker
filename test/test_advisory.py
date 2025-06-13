@@ -1,4 +1,3 @@
-
 from collections import namedtuple
 from subprocess import run
 
@@ -196,6 +195,14 @@ def test_switch_issue_type_changes_multi_package_advisory_to_single_type(db, cli
     assert client.post(url_for('tracker.edit_group', avg=DEFAULT_GROUP_NAME), data=data).status_code == 302
     assert_advisory_data(advisory_get_label(number=1), advisory_type='multiple issues')
     assert_advisory_data(advisory_get_label(number=2), advisory_type='multiple issues')
+
+    for advisory in Advisory.query.all():
+        advisory.advisory_type = 'denial of service'
+    db.session.commit()
+    data.update(notes='Package review notes', changed=str(CVEGroup.query.one().changed))
+    assert client.post(url_for('tracker.edit_group', avg=DEFAULT_GROUP_NAME), data=data).status_code == 302
+    assert_advisory_data(advisory_get_label(number=1), advisory_type='denial of service')
+    assert_advisory_data(advisory_get_label(number=2), advisory_type='denial of service')
 
 
 @create_package(name='foo', version='1.2.3-4')

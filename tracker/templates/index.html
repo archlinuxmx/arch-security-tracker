@@ -16,12 +16,13 @@
                     <option value="{{ value }}" {% if sort == value %}selected{% endif %}>{{ label }}</option>
                     {% endfor %}
                 </select>
-                <button type="submit">Sort</button>
+                <label><input type="checkbox" name="include_removed" value="1" {% if include_removed %}checked{% endif %}> Include removed packages</label>
+                <button type="submit">Apply</button>
             </form>
             <p>
-                {% if pagination.has_prev %}<a href="{{ url_for(request.endpoint, page=pagination.prev_num, sort=sort) }}">Previous</a> · {% endif %}
+                {% if pagination.has_prev %}<a href="{{ url_for(request.endpoint, page=pagination.prev_num, sort=sort, include_removed=1 if include_removed else None) }}">Previous</a> · {% endif %}
                 Page {{ pagination.page }} of {{ pagination.pages or 1 }}
-                {% if pagination.has_next %} · <a href="{{ url_for(request.endpoint, page=pagination.next_num, sort=sort) }}">Next</a>{% endif %}
+                {% if pagination.has_next %} · <a href="{{ url_for(request.endpoint, page=pagination.next_num, sort=sort, include_removed=1 if include_removed else None) }}">Next</a>{% endif %}
             </p>
 			<div class="scroll-x">
 				<table class="styled-table full size">
@@ -51,7 +52,7 @@
                             <td>{{ entry.types|join(', ') }}</td>
 							<td class="wrap">
 								{%- for pkg in entry.pkgs %}
-								<span class="no-wrap"><a href="/package/{{ pkg }}">{{ pkg }}</a>{% if not loop.last %}, {% endif %}</span>
+								<span class="no-wrap"><a href="/package/{{ pkg }}">{{ pkg }}</a>{% if pkg in entry.removed_packages %} (removed){% endif %}{% if not loop.last %}, {% endif %}</span>
 								{%- endfor %}
 							</td>
 							<td>{{ entry.group.affected }}</td>
