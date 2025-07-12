@@ -2,7 +2,7 @@
 {%- from "_formhelpers.html" import nullable_value, colorize_severity, colorize_status, colorize_remote, colorize_unknown, bug_ticket -%}
 {% block content %}
 			{%- if not entries.scheduled_advisories and not entries.unhandled_advisories and not entries.incomplete_advisories
-				and not entries.bumped_groups and not entries.unknown_groups and not entries.unknown_issues and not entries.orphan_issues %}
+				and not entries.stale_groups and not entries.counterpart_suggestions and not entries.bumped_groups and not entries.unknown_groups and not entries.unknown_issues and not entries.orphan_issues %}
 			<div class="error_icon_box">
 				<p class="icon">{{ smiley }}</p>
 				<pre class="text">nothing to do
@@ -256,4 +256,20 @@ Yippie!</pre>
 				{%- endfor %}
 			</table>
 			{%- endif %}
+            {% if entries.stale_groups %}
+            <h2>Assessments to revisit</h2>
+            <p>These open groups have not been edited for 90 days. A version bump or package removal does not establish that a vulnerability is fixed.</p>
+            <table class="styled-table full size">
+                <thead><tr><th>Group</th><th>Packages</th><th>Last changed (UTC)</th><th>Reason</th></tr></thead>
+                <tbody>{% for entry in entries.stale_groups %}<tr><td><a href="/{{ entry.name }}">{{ entry.name }}</a></td><td>{{ entry.packages|join(', ') }}</td><td>{{ entry.last_changed }}</td><td>{{ entry.reason }}</td></tr>{% endfor %}</tbody>
+            </table>
+            {% endif %}
+            {% if entries.counterpart_suggestions %}
+            <h2>Possible lib32 counterparts</h2>
+            <p>Check source versions, build options and fixes before associating these packages with a CVE.</p>
+            <table class="styled-table full size">
+                <thead><tr><th>Group</th><th>Recorded package</th><th>Suggested package</th><th>Unassessed CVEs</th></tr></thead>
+                <tbody>{% for entry in entries.counterpart_suggestions %}<tr><td><a href="/{{ entry.group }}">{{ entry.group }}</a></td><td>{{ entry.package }}</td><td><a href="{{ url_for('tracker.show_package', pkgname=entry.counterpart) }}">{{ entry.counterpart }}</a></td><td>{{ entry.issues|join(', ') }}</td></tr>{% endfor %}</tbody>
+            </table>
+            {% endif %}
 {%- endblock %}
