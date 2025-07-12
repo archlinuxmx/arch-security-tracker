@@ -1,5 +1,7 @@
 from collections import OrderedDict
 from collections import defaultdict
+from datetime import datetime
+from datetime import timedelta
 from operator import attrgetter
 from random import randint
 
@@ -105,7 +107,7 @@ def get_todo_data():
     bumped_groups = []
     for group, packages in vulnerable_group_data.items():
         packages = sorted(packages, key=cmp_to_key(vercmp, attrgetter('version')), reverse=True)
-        if 0 == vercmp(group.affected, packages[0].version):
+        if vercmp(packages[0].version, group.affected) <= 0:
             continue
         versions = filter_duplicate_packages(packages, filter_arch=True)
         pkgnames = set([pkg.name for pkg in packages])
@@ -119,7 +121,10 @@ def get_todo_data():
                        .having(func.count(CVEGroupEntry.id) == 0)
                        .order_by(CVE.id)).all()
 
+    stale_groups, counterpart_suggestions = get_review_suggestions()
     return {
+        'stale_groups': stale_groups,
+        'counterpart_suggestions': counterpart_suggestions,
         'scheduled_advisories': scheduled_advisories,
         'incomplete_advisories': incomplete_advisories,
         'unhandled_advisories': unhandled_advisories,
@@ -128,6 +133,42 @@ def get_todo_data():
         'bumped_groups': bumped_groups,
         'orphan_issues': orphan_issues
     }
+
+
+def get_review_suggestions():
+    rows = (db.session.query(CVEGroup, CVEGroupEntry.cve_id, CVEGroupPackage.pkgname)
+            .join(CVEGroupEntry).join(CVEGroupPackage).all())
+    groups = {}
+    covered = {(cve_id, name) for group, cve_id, name in rows}
+    for group, cve_id, name in rows:
+        item = groups.setdefault(group.id, {'group': group, 'issues': set(), 'packages': set()})
+        item['issues'].add(cve_id)
+        item['packages'].add(name)
+    versions = defaultdict(list)
+    for package in Package.query.all():
+        versions[package.name].append(package)
+
+    stale, counterparts = [], []
+    cutoff = datetime.utcnow() - timedelta(days=90)
+    for item in groups.values():
+        group = item['group']
+        names = sorted(item['packages'])
+        available = [package for name in names for package in versions[name]]
+        if group.status.open() and group.changed < cutoff:
+            reason = 'No edits for 90 days'
+            if not available:
+                reason += '; all packages are removed'
+            elif any(vercmp(package.version, group.affected) > 0 for package in available):
+                reason += '; repository versions are newer than the recorded affected version'
+            stale.append({'name': group.name, 'packages': names, 'last_changed': group.changed.isoformat(),
+                          'reason': reason})
+        for name in names:
+            counterpart = name[6:] if name.startswith('lib32-') else 'lib32-' + name
+            missing = sorted(cve_id for cve_id in item['issues'] if (cve_id, counterpart) not in covered)
+            if versions[counterpart] and missing:
+                counterparts.append({'group': group.name, 'package': name, 'counterpart': counterpart,
+                                     'issues': missing})
+    return sorted(stale, key=lambda item: item['last_changed']), counterparts
 
 
 @tracker.route('/todo', methods=['GET'])
@@ -202,7 +243,9 @@ def todo_json(postfix=None):
 
     json_data['groups'] = {
         'unknown': [group_packages_json(g) for g in data['unknown_groups']],
-        'bumped': [bumped_groups_json(g) for g in data['bumped_groups']]
+        'bumped': [bumped_groups_json(g) for g in data['bumped_groups']],
+        'stale': data['stale_groups'],
+        'counterparts': data['counterpart_suggestions']
     }
 
     json_data['issues'] = {

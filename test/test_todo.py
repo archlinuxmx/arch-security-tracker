@@ -264,3 +264,18 @@ def test_todo_issues_unknown_without_description(db, client):
 
     issue = next(iter(data['issues']['unknown']))
     assert 'CVE-1111-1111' == issue['name']
+
+
+@create_package(name='foo', version='2-1')
+@create_package(name='lib32-foo', version='2-1')
+@create_group(id=9, packages=['foo'], affected='1-1', status=Status.vulnerable)
+def test_review_suggestions_never_resolve_groups(db, client):
+    from tracker.model import CVEGroup
+
+    data = client.get('/todo.json').get_json()['groups']
+    assert data['stale'][0]['name'] == 'AVG-9'
+    assert 'newer' in data['stale'][0]['reason']
+    assert data['counterparts'][0]['counterpart'] == 'lib32-foo'
+    assert CVEGroup.query.get(9).status == Status.vulnerable
+    page = client.get('/todo').data
+    assert b'Assessments to revisit' in page and b'Possible lib32 counterparts' in page
