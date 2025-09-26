@@ -8,6 +8,7 @@ from .edit import *
 from .error import *
 from .index import *
 from .login import *
+from .review import *
 from .show import *
 from .stats import *
 from .todo import *
