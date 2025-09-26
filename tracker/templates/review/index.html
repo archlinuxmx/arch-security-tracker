@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+<p>Assessments are visible to active reporters. Open a CVE or AVG to record a rationale.</p>
+<form method="post">
+	{{ form.hidden_tag() }}
+	{{ render_field(form.target) }} {{ form.submit() }}
+</form>
+<h2>Latest assessments (up to 100 records)</h2>
+<ul>
+{% for event in events %}
+	<li><a href="{{ url_for('tracker.review_record', name=event.target) }}">{{ event.target }}</a>: {{ event.action }} — {{ event.created }}</li>
+{% endfor %}
+</ul>
+{% endblock %}

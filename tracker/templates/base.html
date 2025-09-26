@@ -34,6 +34,7 @@
 					<li><a href="/avg/add">add AVG</a></li>
 					{%- if current_user.active and current_user.role.is_reporter %}
 					<li><a href="{{ url_for('tracker.manage_api_tokens') }}">API tokens</a></li>
+					<li><a href="{{ url_for('tracker.review_index') }}">review</a></li>
 					{%- endif %}
 					{%- if not SSO_ENABLED %}
 					<li><a href="/profile">profile</a></li>
