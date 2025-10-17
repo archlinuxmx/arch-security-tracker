@@ -91,3 +91,8 @@ def record_event(record, action, rationale, revision=None):
                         revision=revision or content_revision(record), user_id=current_user.id)
     db.session.add(event)
     return event
+
+
+def record_intake_event(candidate, action, rationale, user_id):
+    db.session.add(ReviewEvent(target='INTAKE-{}'.format(candidate.id), action=action, rationale=rationale,
+                               revision=str(candidate.revision), user_id=user_id))
