@@ -15,8 +15,13 @@ from werkzeug.exceptions import HTTPException
 from tracker import db
 from tracker import tracker
 from tracker.form.review import AssessmentForm
+from tracker.form.review import IntakeDecisionForm
+from tracker.form.review import IntakeForm
+from tracker.form.review import IntakePromoteForm
 from tracker.form.review import ReviewLookupForm
 from tracker.form.review import SignoffForm
+from tracker.model import CVE
+from tracker.model.review import IntakeCandidate
 from tracker.model.review import ReviewEvent
 from tracker.review import assessment_for
 from tracker.review import content_revision
@@ -26,6 +31,7 @@ from tracker.review import review_revision
 from tracker.review import review_target
 from tracker.review import target_name
 from tracker.user import reporter_required
+from tracker.util import page_number
 from tracker.view.error import handle_error
 
 
@@ -107,3 +113,86 @@ def review_signoff(name):
     record_event(record, 'signoff', form.rationale.data, revision=form.revision.data)
     db.session.commit()
     return redirect(url_for('tracker.review_record', name=name))
+
+
+@tracker.route('/review/intake', methods=['GET', 'POST'])
+@private_review
+def review_intake():
+    form = IntakeForm()
+    if form.validate_on_submit():
+        candidate = IntakeCandidate(title=form.title.data, source=form.source.data,
+                                    cve_name=form.cve_name.data or None, evidence=form.evidence.data,
+                                    description=form.description.data, reference=form.reference.data)
+        db.session.add(candidate)
+        db.session.flush()
+        db.session.add(ReviewEvent(target='INTAKE-{}'.format(candidate.id), action='intake-added',
+                                   rationale='Added for review', revision=str(candidate.revision), user_id=current_user.id))
+        db.session.commit()
+        return redirect(url_for('tracker.review_intake_detail', candidate_id=candidate.id))
+    state = request.args.get('state', 'pending')
+    if state not in ('pending', 'approved', 'rejected'):
+        abort(400, 'Unknown queue state.')
+    page = page_number(request.args.get('page', 1), 50)
+    candidates = IntakeCandidate.query.filter_by(state=state).order_by(IntakeCandidate.id.desc()).paginate(page=page, per_page=50, error_out=True)
+    return render_template('review/intake.html', title='Disclosure intake', form=form,
+                           candidates=candidates, state=state), 400 if request.method == 'POST' else 200
+
+
+def lock_candidate(candidate, revision):
+    table = IntakeCandidate.__table__
+    result = db.session.execute(table.update().where(table.c.id == candidate.id).values(revision=table.c.revision))
+    if result.rowcount != 1:
+        abort(409, 'The candidate was removed. Reload before submitting.')
+    db.session.expire_all()
+    if candidate.revision != revision or candidate.promoted_cve:
+        abort(409, 'The candidate changed or was already promoted. Reload before submitting.')
+
+
+@tracker.route('/review/intake/<int:candidate_id>', methods=['GET', 'POST'])
+@private_review
+def review_intake_detail(candidate_id):
+    candidate = IntakeCandidate.query.get_or_404(candidate_id)
+    form = IntakeDecisionForm()
+    if form.validate_on_submit():
+        lock_candidate(candidate, form.revision.data)
+        candidate.state = form.state.data
+        candidate.cve_name = form.cve_name.data or None
+        # Record even repeated decisions as distinct, conflict-checked revisions.
+        candidate.revision += 1
+        db.session.add(ReviewEvent(target='INTAKE-{}'.format(candidate.id), action='intake-' + candidate.state,
+                                   rationale=form.rationale.data, revision=str(candidate.revision), user_id=current_user.id))
+        db.session.commit()
+        return redirect(url_for('tracker.review_intake_detail', candidate_id=candidate.id))
+    if request.method == 'GET':
+        form.revision.data = candidate.revision
+        form.state.data = candidate.state
+        form.cve_name.data = candidate.cve_name
+    events = ReviewEvent.query.filter_by(target='INTAKE-{}'.format(candidate.id)).order_by(ReviewEvent.id).all()
+    return render_template('review/intake_detail.html', title=candidate.title, candidate=candidate, form=form,
+                           promote_form=IntakePromoteForm(formdata=None, revision=candidate.revision),
+                           events=events), 400 if request.method == 'POST' else 200
+
+
+@tracker.route('/review/intake/<int:candidate_id>/promote', methods=['POST'])
+@private_review
+def review_intake_promote(candidate_id):
+    candidate = IntakeCandidate.query.get_or_404(candidate_id)
+    form = IntakePromoteForm()
+    if not form.validate_on_submit():
+        abort(400, 'A revision and valid CSRF token are required.')
+    lock_candidate(candidate, form.revision.data)
+    if candidate.state != 'approved' or not candidate.cve_name:
+        abort(409, 'Approve the candidate and assign a CVE identifier first.')
+    if CVE.query.get(candidate.cve_name):
+        abort(409, 'This CVE already exists. Review it directly; existing records are never overwritten.')
+    record = CVE.new(candidate.cve_name)
+    record.description = candidate.description
+    record.reference = candidate.reference
+    db.session.add(record)
+    candidate.promoted_cve = record.id
+    db.session.flush()
+    record_event(record, 'required', 'Created from a reviewed disclosure; evaluate applicability.')
+    db.session.add(ReviewEvent(target='INTAKE-{}'.format(candidate.id), action='intake-promoted',
+                               rationale='Created ' + record.id, revision=str(candidate.revision), user_id=current_user.id))
+    db.session.commit()
+    return redirect(url_for('tracker.review_record', name=record.id))

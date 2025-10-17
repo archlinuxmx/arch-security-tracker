@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+<p>Private source evidence stays in this queue. Only the proposed public description and references can be promoted.</p>
+<p>{% for value in ['pending', 'approved', 'rejected'] %}<a href="{{ url_for('tracker.review_intake', state=value) }}">{{ value }}</a> {% endfor %}</p>
+<ul>{% for candidate in candidates.items %}
+	<li><a href="{{ url_for('tracker.review_intake_detail', candidate_id=candidate.id) }}">{{ candidate.title }}</a>{% if candidate.promoted_cve %} — {{ candidate.promoted_cve }}{% endif %}</li>
+{% endfor %}</ul>
+{% if candidates.has_prev %}<a href="{{ url_for('tracker.review_intake', state=state, page=candidates.prev_num) }}">Previous</a>{% endif %}
+{% if candidates.has_next %}<a href="{{ url_for('tracker.review_intake', state=state, page=candidates.next_num) }}">Next</a>{% endif %}
+<h2>Add a disclosure</h2>
+<form method="post">
+	{{ form.hidden_tag() }}
+	{% for field in [form.title, form.source, form.cve_name, form.evidence, form.description, form.reference] %}{{ render_field(field) }}{% endfor %}
+	{{ form.submit() }}
+</form>
+{% endblock %}

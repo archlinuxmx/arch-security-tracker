@@ -15,3 +15,21 @@ class ReviewEvent(db.Model):
     user_id = db.Column(db.Integer(), db.ForeignKey('user.id', ondelete='SET NULL'))
     user = db.relationship('User')
     created = db.Column(db.DateTime(), nullable=False, default=datetime.utcnow)
+
+
+class IntakeCandidate(db.Model):
+    """A private, manually reviewed disclosure, independent of public CVEs."""
+
+    __tablename__ = 'intake_candidate'
+    id = db.Column(db.Integer(), primary_key=True)
+    title = db.Column(db.String(255), nullable=False)
+    source = db.Column(db.String(2048), nullable=False)
+    cve_name = db.Column(db.String(64), nullable=True)
+    evidence = db.Column(db.Text(), nullable=False, default='')
+    description = db.Column(db.String(4096), nullable=False, default='')
+    reference = db.Column(db.String(4096), nullable=False, default='')
+    state = db.Column(db.String(16), nullable=False, default='pending', index=True)
+    promoted_cve = db.Column(db.String(64), nullable=True)
+    revision = db.Column(db.Integer(), nullable=False, default=1)
+    created = db.Column(db.DateTime(), nullable=False, default=datetime.utcnow)
+    __mapper_args__ = {'version_id_col': revision}

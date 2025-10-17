@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+<p>Source reference (private): {{ candidate.source }}</p>
+<pre>{{ candidate.evidence }}</pre>
+<h2>Proposed public content</h2>
+<pre>{{ candidate.description }}</pre>
+<pre>{{ candidate.reference }}</pre>
+{% if candidate.promoted_cve %}
+<p>Promoted to <a href="{{ url_for('tracker.show_cve', cve=candidate.promoted_cve) }}">{{ candidate.promoted_cve }}</a>.</p>
+{% else %}
+<form method="post">
+	{{ form.hidden_tag() }}
+	{% for field in [form.revision, form.cve_name, form.state, form.rationale] %}{{ render_field(field) }}{% endfor %}
+	{{ form.submit() }}
+</form>
+{% if candidate.state == 'approved' %}
+<p>Creating a CVE makes the proposed description and references public immediately.</p>
+<form action="{{ url_for('tracker.review_intake_promote', candidate_id=candidate.id) }}" method="post">
+	{{ promote_form.hidden_tag() }} {{ render_field(promote_form.revision) }} {{ promote_form.submit() }}
+</form>
+{% endif %}
+{% endif %}
+<h2>Decision history</h2>
+{% for event in events %}<p>{{ event.created }} — {{ event.user.name if event.user else 'Deleted user' }} — {{ event.action }}</p><pre>{{ event.rationale }}</pre>{% endfor %}
+{% endblock %}

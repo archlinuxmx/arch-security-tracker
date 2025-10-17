@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>{{ title }}</h1>
+<p><a href="{{ url_for('tracker.review_intake') }}">Disclosure intake queue</a></p>
 <p>Assessments are visible to active reporters. Open a CVE or AVG to record a rationale.</p>
 <form method="post">
 	{{ form.hidden_tag() }}

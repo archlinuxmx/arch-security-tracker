@@ -5,5 +5,6 @@ from .cvegroup import CVEGroup
 from .cvegroupentry import CVEGroupEntry
 from .cvegrouppackage import CVEGroupPackage
 from .package import Package
+from .review import IntakeCandidate
 from .review import ReviewEvent
 from .user import User

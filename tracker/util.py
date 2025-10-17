@@ -1,10 +1,12 @@
 import re
 from functools import cmp_to_key as comparison_key
 from functools import wraps
+from urllib.parse import urlsplit
 
 from flask import abort
 from flask import json
 from requests.models import PreparedRequest
+from wtforms.validators import URL
 
 from config import atom_feeds
 
@@ -15,6 +17,24 @@ punctuation_re = re.compile(
         '|'.join(map(re.escape, ('.', ',', ')', '>', '\n', '&gt;')))
     )
 )
+
+
+def valid_reference_url(value, schemes=('http', 'https')):
+    if not isinstance(value, str):
+        return False
+    if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value):
+        return False
+    try:
+        value.encode('utf-8')
+        parsed = urlsplit(value)
+        if schemes is not None and parsed.scheme not in schemes:
+            return False
+        if not parsed.hostname or (parsed.port is not None and parsed.port > 65535):
+            return False
+        return URL().regex.fullmatch(value) is not None
+    except (UnicodeError, ValueError):
+        return False
+
 
 
 def page_number(value, per_page):
