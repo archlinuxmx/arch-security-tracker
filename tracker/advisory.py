@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from flask import render_template
 from markupsafe import escape as html_escape
 from requests import get
+from sqlalchemy import true
 
 from config import TRACKER_ADVISORY_URL
 from config import TRACKER_BUGTRACKER_URL
@@ -18,6 +19,7 @@ from config import TRACKER_GROUP_URL
 from config import TRACKER_ISSUE_URL
 from config import TRACKER_MAILMAN_URL
 from tracker import db
+from tracker import tracker
 from tracker.model import CVE
 from tracker.model import Advisory
 from tracker.model import CVEGroup
@@ -30,6 +32,24 @@ from tracker.user import user_can_handle_advisory
 from tracker.util import chunks
 from tracker.util import issue_to_numeric
 from tracker.util import multiline_to_list
+
+
+@tracker.app_template_global()
+def can_view_advisory(advisory):
+    return user_can_handle_advisory() or (advisory is not None and advisory.publication == Publication.published)
+
+
+def viewable_advisories(model=Advisory):
+    # can_view_advisory() as a query filter, for advisories or their versions.
+    return true() if user_can_handle_advisory() else model.publication == Publication.published
+
+
+@tracker.after_request
+def prevent_draft_caching(response):
+    response.vary.add('Cookie')
+    if user_can_handle_advisory():
+        response.headers['Cache-Control'] = 'private, no-store'
+    return response
 
 
 def generate_advisory(advisory_id, with_subject=True, raw=True):
@@ -207,6 +227,12 @@ def advisory_get_date_label(utctimetuple=None):
 def advisory_get_label(date_label=None, number=1):
     date_label = date_label if date_label else advisory_get_date_label()
     return 'ASA-{}-{}'.format(date_label, number)
+
+
+def advisory_get_last_number(date_label):
+    prefix = 'ASA-{}-'.format(date_label)
+    identifiers = db.session.query(Advisory.id).filter(Advisory.id.startswith(prefix))
+    return max((int(identifier.rsplit('-', 1)[1]) for identifier, in identifiers), default=0)
 
 
 def advisory_format_issue_listing(issues, columns=4, rjust_left=len('CVE-ID  : ')):

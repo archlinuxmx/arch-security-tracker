@@ -47,7 +47,7 @@ def permission_required(permission):
     def decorator(func):
         @wraps(func)
         def decorated_view(*args, **kwargs):
-            if not permission.fget(current_user.role):
+            if not current_user.active or not permission.fget(current_user.role):
                 from tracker.view.error import forbidden
                 return forbidden()
             return func(*args, **kwargs)
@@ -112,7 +112,7 @@ def user_can_delete_group(advisories=[]):
 
 
 def user_can_handle_advisory():
-    return current_user.role.is_security_team
+    return current_user.is_authenticated and current_user.active and current_user.role.is_security_team
 
 
 def user_can_watch_log():

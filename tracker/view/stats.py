@@ -6,6 +6,7 @@ from werkzeug.exceptions import ImATeapot
 
 from tracker import db
 from tracker import tracker
+from tracker.advisory import viewable_advisories
 from tracker.model import CVE
 from tracker.model import Advisory
 from tracker.model import CVEGroup
@@ -181,6 +182,7 @@ def get_stats_data():
 
     # advisory
     entries = (db.session.query(Advisory, CVEGroupPackage, CVEGroup)
+               .filter(viewable_advisories())
                .join(CVEGroupPackage, Advisory.group_package)
                .join(CVEGroup, CVEGroupPackage.group)).all()
 

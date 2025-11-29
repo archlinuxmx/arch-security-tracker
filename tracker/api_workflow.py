@@ -1,4 +1,4 @@
-"""Token-authenticated CVE and group edits."""
+"""Token-authenticated edits and the reviewed AVG/advisory workflow."""
 
 from hashlib import sha256
 from re import fullmatch
@@ -8,15 +8,21 @@ from flask import jsonify
 from flask import request
 from flask import url_for
 from pyalpm import vercmp
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 from werkzeug.exceptions import NotFound
 
 from tracker import db
+from tracker.advisory import advisory_get_date_label
+from tracker.advisory import advisory_get_label
+from tracker.advisory import advisory_get_last_number
+from tracker.advisory import generate_advisory
 from tracker.api import APIError
 from tracker.api import api
 from tracker.api import error_response
 from tracker.api import read_json
 from tracker.api import serialize_cves
+from tracker.api import timestamp
 from tracker.api import token_required
 from tracker.api import valid_name
 from tracker.api import valid_text
@@ -29,12 +35,15 @@ from tracker.model import CVEGroup
 from tracker.model import CVEGroupEntry
 from tracker.model import CVEGroupPackage
 from tracker.model import Package
+from tracker.model.advisory import advisory_type_for
+from tracker.model.advisory import advisory_types
 from tracker.model.cvegroup import group_advisories
 from tracker.model.cvegroup import pkgname_regex
 from tracker.model.cvegroup import pkgver_regex
 from tracker.model.cvegroup import refresh_group
 from tracker.model.cvegroup import valid_bug_ticket
 from tracker.model.enum import Affected
+from tracker.model.enum import Publication
 from tracker.model.enum import Status
 from tracker.model.enum import group_status
 from tracker.model.user import User
@@ -119,7 +128,9 @@ def validate_group(data, group=None):
         elif field == 'packages' and not all(len(item) <= 64 and fullmatch(pkgname_regex, item) for item in values):
             fields[field] = ['Invalid package name.']
     affected = data.get('affected')
-    fixed = data.get('fixed') or None
+    fixed = data.get('fixed')
+    if fixed == '':
+        fixed = None
     if not valid_text(affected, 32) or not fullmatch(pkgver_regex, affected):
         fields['affected'] = ['An Arch package version is required.']
     if fixed is not None and (not valid_text(fixed, 32) or not fullmatch(pkgver_regex, fixed)):
@@ -212,7 +223,7 @@ def create_group():
 @api.route('/groups/<name>', methods=['PATCH'])
 @token_required(scope='groups:update')
 def update_group(name):
-    if not fullmatch(r'AVG-[0-9]+', name):
+    if not fullmatch(r'AVG-[0-9]{1,18}', name):
         raise NotFound('Group not found.')
     data = read_json()
     if not data:
@@ -237,3 +248,79 @@ def update_group(name):
         apply_group(group, values)
     db.session.commit()
     return record_response(serialize_group(group))
+
+
+def serialize_draft(advisory):
+    group = advisory.group_package.group
+    content = generate_advisory(advisory.id) if group.fixed and group.issues else ''
+    return {'name': advisory.id, 'group': group.name, 'package': advisory.group_package.pkgname,
+            'type': advisory.advisory_type, 'publication': advisory.publication.name,
+            'workaround': advisory.workaround or '', 'impact': advisory.impact or '',
+            'content': content, 'updated': timestamp(advisory.changed)}
+
+
+def get_draft(name, locked=False):
+    advisory = write_lock(Advisory, name) if locked else Advisory.query.filter_by(id=name).first()
+    if advisory is None:
+        raise NotFound('Advisory draft not found.')
+    if advisory.publication != Publication.scheduled:
+        raise APIError(409, 'already_published', 'Published advisories cannot be changed through the draft API.')
+    return advisory
+
+
+@api.route('/groups/<name>/advisory-drafts', methods=['POST'])
+@token_required(scope='advisories:write')
+def create_advisory_drafts(name):
+    if not fullmatch(r'AVG-[0-9]{1,18}', name):
+        raise NotFound('Group not found.')
+    data = read_json()
+    if set(data) - {'type'} or ('type' in data and data['type'] not in advisory_types):
+        raise APIError(422, 'validation_error', 'Only a valid advisory type can be supplied.')
+    group = write_lock(CVEGroup, int(name[4:]))
+    if group.status != Status.fixed or not group.fixed or not group.issues or not group.packages:
+        raise APIError(409, 'group_not_fixed', 'An AVG with a reviewed fix, CVEs, and packages is required.')
+    if group_advisories(group):
+        raise APIError(409, 'already_exists', 'An advisory already exists for this group.')
+    default_type = advisory_type_for(entry.cve.issue_type for entry in group.issues)
+    label = advisory_get_date_label()
+    number = advisory_get_last_number(label)
+    drafts = []
+    for package in sorted(group.packages, key=lambda package: package.pkgname):
+        number += 1
+        advisory = Advisory(id=advisory_get_label(label, number), group_package=package,
+                            advisory_type=data.get('type', default_type), publication=Publication.scheduled)
+        db.session.add(advisory)
+        drafts.append(advisory)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        raise APIError(409, 'concurrent_creation',
+                       'An advisory was created concurrently; fetch the group before retrying.')
+    return record_response({'items': [serialize_draft(advisory) for advisory in drafts]}, 201)
+
+
+@api.route('/advisory-drafts/<name>', methods=['GET'])
+@token_required(scope='advisories:write')
+def read_advisory_draft(name):
+    return record_response(serialize_draft(get_draft(name)))
+
+
+@api.route('/advisory-drafts/<name>', methods=['PATCH'])
+@token_required(scope='advisories:write')
+def update_advisory_draft(name):
+    data = read_json()
+    if not data or set(data) - {'type', 'workaround', 'impact'}:
+        raise APIError(422, 'validation_error', 'Supply type, workaround, or impact; publication is not writable.')
+    if 'type' in data and data['type'] not in advisory_types:
+        raise APIError(422, 'validation_error', 'Invalid advisory type.')
+    for field, length in (('workaround', Advisory.WORKAROUND_LENGTH), ('impact', Advisory.IMPACT_LENGTH)):
+        if field in data and not valid_text(data[field], length):
+            raise APIError(422, 'validation_error',
+                           '{} must be Unicode text of at most {} characters.'.format(field, length))
+    advisory = get_draft(name, locked=True)
+    require_match(serialize_draft(advisory))
+    for key, value in data.items():
+        setattr(advisory, 'advisory_type' if key == 'type' else key, value)
+    db.session.commit()
+    return record_response(serialize_draft(advisory))

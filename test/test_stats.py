@@ -14,6 +14,7 @@ from .conftest import create_group
 from .conftest import create_issue
 from .conftest import create_package
 from .conftest import create_user
+from .conftest import logged_in
 
 
 def test_stats_page(db, client):
@@ -153,6 +154,7 @@ def test_stats_data_status_issues(db, client):
 @create_advisory(id='203212-01', group_package_id=3)
 @create_advisory(id='203312-01', group_package_id=4)
 @create_advisory(id='203412-01', group_package_id=5)
+@logged_in
 def test_stats_data_status_advisories(db, client):
     resp = client.get(url_for('tracker.stats_json', suffix='.json'))
     assert ImATeapot.code == resp.status_code
@@ -232,6 +234,7 @@ def test_stats_data_type_issues(db, client):
 @create_advisory(id='203112-01', group_package_id=2)
 @create_advisory(id='203212-01', group_package_id=3)
 @create_advisory(id='203312-01', group_package_id=4)
+@logged_in
 def test_stats_data_type_advisories(db, client):
     resp = client.get(url_for('tracker.stats_json', suffix='.json'))
     assert ImATeapot.code == resp.status_code

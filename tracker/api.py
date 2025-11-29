@@ -214,6 +214,8 @@ def token_required(func=None, *, scope=ApiToken.SCOPE):
             raise APIError(401, 'unauthorized', 'A valid Bearer token is required.')
         if not token.user.active or not token.user.role.is_reporter or token.scope != scope:
             raise APIError(403, 'forbidden', 'This token does not permit this operation.')
+        if scope == 'advisories:write' and not token.user.role.is_security_team:
+            raise APIError(403, 'forbidden', 'Security Team membership is required.')
         # Continuum uses this request-local actor; no browser session is created.
         g.api_user = token.user
         try:

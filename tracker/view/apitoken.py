@@ -30,6 +30,8 @@ def manage_api_tokens():
         return forbidden()
 
     form = ApiTokenForm()
+    if not current_user.role.is_security_team:
+        form.scope.choices = [(scope, scope) for scope in ApiToken.SCOPES if scope != 'advisories:write']
     secret = None
     status = 200
     if form.validate_on_submit():
