@@ -3,6 +3,7 @@ from flask import redirect
 from flask import render_template
 from flask_login import current_user
 from flask_login import login_required
+from sqlalchemy import and_
 from sqlalchemy_continuum import version_class
 from sqlalchemy_continuum import versioning_manager
 
@@ -10,6 +11,7 @@ from config import TRACKER_PASSWORD_LENGTH_MAX
 from config import TRACKER_PASSWORD_LENGTH_MIN
 from tracker import db
 from tracker import tracker
+from tracker.advisory import can_view_advisory
 from tracker.form.user import UserPasswordForm
 from tracker.model import CVE
 from tracker.model import Advisory
@@ -57,9 +59,13 @@ def show_user_log(username, page=1):
     pagination = (db.session.query(Transaction, VersionClassCVE, VersionClassGroup, VersionClassAdvisory)
                   .outerjoin(VersionClassCVE, Transaction.id == VersionClassCVE.transaction_id)
                   .outerjoin(VersionClassGroup, Transaction.id == VersionClassGroup.transaction_id)
-                  .outerjoin(VersionClassAdvisory, Transaction.id == VersionClassAdvisory.transaction_id)
+                  .outerjoin(VersionClassAdvisory, and_(Transaction.id == VersionClassAdvisory.transaction_id,
+                                                       can_view_advisory(VersionClassAdvisory)))
                   .join(User)
                   .filter(User.name == username)
+                  .filter((VersionClassCVE.transaction_id.isnot(None)) |
+                          (VersionClassGroup.transaction_id.isnot(None)) |
+                          (VersionClassAdvisory.transaction_id.isnot(None)))
                   .order_by(Transaction.issued_at.desc(), Transaction.id.desc(),
                             VersionClassCVE.id, VersionClassGroup.id, VersionClassAdvisory.id)
                   ).paginate(page=page, per_page=MAX_ENTRIES_PER_PAGE, error_out=True)

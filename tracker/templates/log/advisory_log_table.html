@@ -1,4 +1,5 @@
 {%- from "_formhelpers.html" import colorize_diff, log_transaction_header %}
+{%- set previous = advisory.previous if can_view_advisory(advisory.previous) else none %}
 			<table class="styled-table column-major full size">
 				<thead>
 					<tr>
@@ -10,7 +11,7 @@
 					<tr>
 						<td>Workaround</td>
 						<td class="full size">
-							{{- colorize_diff(advisory.previous.workaround, diff_content(advisory, advisory.workaround)) }}
+							{{- colorize_diff(previous.workaround, diff_content(advisory, advisory.workaround)) }}
 						</td>
 					</tr>
 					{%- endif %}
@@ -18,7 +19,7 @@
 					<tr>
 						<td>Impact</td>
 						<td class="full size">
-							{{- colorize_diff(advisory.previous.impact, diff_content(advisory, advisory.impact)) }}
+							{{- colorize_diff(previous.impact, diff_content(advisory, advisory.impact)) }}
 						</td>
 					</tr>
 					{%- endif %}

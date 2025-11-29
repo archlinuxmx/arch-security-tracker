@@ -1,5 +1,6 @@
 import pytest
 
+from tracker.advisory import generate_advisory
 from tracker.model import CVE
 from tracker.model import Advisory
 from tracker.model import CVEGroup
@@ -10,6 +11,7 @@ from tracker.model.enum import Severity
 from tracker.model.enum import Status
 from tracker.model.enum import UserRole
 from tracker.model.user import User
+from tracker.user import hash_password
 
 from .conftest import DEFAULT_ISSUE_ID
 from .conftest import create_advisory
@@ -190,3 +192,101 @@ def test_group_update_validates_versions_and_keeps_relationships(db, client, wor
     assert response.status_code == 200
     assert response.get_json()['status'] == 'not_affected'
     assert response.get_json()['advisory_qualified'] is False
+
+
+@create_package(name='foo', version='2.0-1')
+@create_issue(description='The issue description', severity=Severity.high)
+@create_group(fixed='1.1-1', bug_ticket='https://gitlab.archlinux.org/archlinux/packaging/packages/foo/-/issues/73')
+def test_advisory_drafts_generate_content_without_publishing(db, client, workflow_tokens):
+    headers = workflow_tokens['advisories:write']
+    response = client.post('/api/v1/groups/AVG-1/advisory-drafts', json={}, headers=headers)
+    assert response.status_code == 201
+    record = response.get_json()['items'][0]
+    assert record['publication'] == 'scheduled'
+    assert 'The issue description' in record['content']
+    assert '\nhttps://gitlab.archlinux.org/archlinux/packaging/packages/foo/-/issues/73\n' in record['content']
+    path = '/api/v1/advisory-drafts/' + record['name']
+    assert client.get(path).status_code == 401
+    draft = client.get(path, headers=headers)
+    edit_headers = dict(headers, **{'If-Match': draft.headers['ETag']})
+    response = client.patch(path, json={'impact': 'unpublishedimpactmarker'}, headers=edit_headers)
+    assert response.status_code == 200
+    assert 'unpublishedimpactmarker' in response.get_json()['content']
+    pages = ('/', '/advisories', '/advisories.json', '/advisories/feed.atom', '/todo', '/todo.json',
+             '/log', '/' + DEFAULT_ISSUE_ID, '/' + DEFAULT_ISSUE_ID + '.json',
+             '/AVG-1', '/AVG-1.json', '/package/foo', '/package/foo.json')
+
+    def assert_private():
+        for prefix in ('/', '/advisory/'):
+            for suffix in ('', '/raw', '/generate', '/generate/raw', '/log'):
+                response = client.get(prefix + record['name'] + suffix, follow_redirects=True)
+                assert response.status_code == 404
+        for page in pages:
+            response = client.get(page)
+            assert response.status_code == 200
+            assert record['name'].encode() not in response.data
+            assert b'unpublishedimpactmarker' not in response.data
+        response = client.get('/stats.json')
+        assert response.status_code == 418
+        assert response.get_json()['advisories']['total'] == 0
+        assert not any(response.get_json()['advisories']['type'].values())
+        assert client.get('/stats').status_code == 418
+
+    assert_private()
+    assert client.patch(path, json={'impact': 'Stale update'}, headers=edit_headers).status_code == 412
+    assert client.patch(path, json={'publication': 'published'}, headers=headers).status_code == 422
+    assert client.post('/api/v1/groups/AVG-1/advisory-drafts', json={}, headers=headers).status_code == 409
+    assert Advisory.query.one().publication == Publication.scheduled
+    assert Advisory.query.one().reference is None
+    user = User.query.filter_by(name='workflow').one()
+    user.role = UserRole.reporter
+    user.password = hash_password('workflow-password', user.salt)
+    db.session.commit()
+    assert client.get(path, headers=headers).status_code == 403
+    assert client.post('/login', data={'username': user.name, 'password': 'workflow-password'}).status_code == 302
+    assert_private()
+    response = client.get('/user/workflow/log')
+    assert record['name'].encode() not in response.data
+    assert b'unpublishedimpactmarker' not in response.data
+    for role in (UserRole.security_team, UserRole.administrator):
+        user.role = role
+        db.session.commit()
+        for suffix in ('/raw', '/log'):
+            response = client.get('/' + record['name'] + suffix, follow_redirects=True)
+            assert response.status_code == 200
+            assert b'unpublishedimpactmarker' in response.data
+            assert 'no-store' in response.headers['Cache-Control']
+            assert 'Cookie' in response.vary
+        assert record['name'].encode() in client.get('/todo.json').data
+        assert b'unpublishedimpactmarker' in client.get('/user/workflow/log').data
+        assert client.get('/stats.json').get_json()['advisories']['total'] == 1
+    user.active = False
+    db.session.commit()
+    assert_private()
+    for suffix in ('/edit', '/delete', '/publish'):
+        assert client.get('/' + record['name'] + suffix).status_code == 403
+    advisory = Advisory.query.one()
+    advisory.publication = Publication.published
+    advisory.impact = 'publishedimpactmarker'
+    advisory.content = generate_advisory(advisory.id)
+    db.session.commit()
+    client.get('/logout')
+    for suffix in ('', '/raw', '/generate', '/generate/raw', '/log'):
+        response = client.get('/' + record['name'] + suffix, follow_redirects=True)
+        assert response.status_code == 200
+        assert b'unpublishedimpactmarker' not in response.data
+        assert b'publishedimpactmarker' in response.data
+    assert b'unpublishedimpactmarker' not in client.get('/log').data
+    assert client.get('/stats.json').get_json()['advisories']['total'] == 1
+
+
+@create_issue
+@create_group(fixed='1.1-1')
+@create_advisory(publication=Publication.published)
+def test_published_advisory_is_never_a_writable_draft(db, client, workflow_tokens):
+    advisory = Advisory.query.one()
+    response = client.patch('/api/v1/advisory-drafts/' + advisory.id,
+                            json={'impact': 'Replacement'}, headers=workflow_tokens['advisories:write'])
+    assert response.status_code == 409
+    assert Advisory.query.one().impact is None
+    assert Advisory.query.one().publication == Publication.published

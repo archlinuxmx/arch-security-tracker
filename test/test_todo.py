@@ -1,6 +1,8 @@
 from flask import url_for
 
 from tracker.advisory import advisory_get_label
+from tracker.model import Advisory
+from tracker.model import CVEGroupPackage
 from tracker.model.cve import issue_types
 from tracker.model.enum import Publication
 from tracker.model.enum import Remote
@@ -14,6 +16,7 @@ from .conftest import create_advisory
 from .conftest import create_group
 from .conftest import create_issue
 from .conftest import create_package
+from .conftest import logged_in
 
 
 @create_issue(id='CVE-1111-1111', issue_type=issue_types[2])
@@ -38,6 +41,7 @@ def test_todo_success(db, client):
 @create_group(id=4242, issues=['CVE-1111-2222'], packages=['foo', 'bar'], affected='1.2.3-4')
 @create_advisory(id=DEFAULT_ADVISORY_ID, advisory_type='multiple issues')
 @create_advisory(id=advisory_get_label(number=2), group_package_id=2, advisory_type='multiple issues', publication=Publication.published)
+@logged_in
 def test_todo_json_success(db, client):
     resp = client.get(url_for('tracker.todo_json', postfix='.json'))
     assert 200 == resp.status_code
@@ -84,6 +88,18 @@ def test_todo_advisory_unhandled(db, client):
     advisory = next(iter(data['advisories']['unhandled']))
     assert advisory['name'] == DEFAULT_GROUP_NAME
     assert advisory['status'] == Status.fixed
+    original = data['advisories']['unhandled']
+    package = CVEGroupPackage.query.filter_by(pkgname='bar').one()
+    draft = Advisory(id=DEFAULT_ADVISORY_ID, group_package_id=package.id, publication=Publication.scheduled)
+    db.session.add(draft)
+    db.session.commit()
+    data = client.get('/todo.json').get_json()
+    assert data['advisories']['unhandled'] == original
+    assert not data['advisories']['scheduled']
+    draft.publication = Publication.published
+    db.session.commit()
+    data = client.get('/todo.json').get_json()
+    assert data['advisories']['unhandled'][0]['packages'] == ['foo']
 
 
 @create_issue(id='CVE-1111-1111', issue_type=issue_types[2])
@@ -91,6 +107,7 @@ def test_todo_advisory_unhandled(db, client):
 @create_package(name='bar', base='lol', version='1.2.3-4')
 @create_group(id=DEFAULT_GROUP_ID, issues=['CVE-1111-1111'], packages=['foo', 'bar'], affected='1.2.3-3', fixed='1.2.3-4')
 @create_advisory(id=DEFAULT_ADVISORY_ID, group_package_id=2, publication=Publication.scheduled)
+@logged_in
 def test_todo_advisory_scheduled(db, client):
     resp = client.get(url_for('tracker.todo_json', postfix='.json'))
     assert 200 == resp.status_code

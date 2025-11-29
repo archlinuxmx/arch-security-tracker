@@ -19,6 +19,7 @@ from tracker import tracker
 from tracker.advisory import advisory_escape_html
 from tracker.advisory import advisory_extend_html
 from tracker.advisory import advisory_format_issue_listing
+from tracker.advisory import can_view_advisory
 from tracker.advisory import generate_advisory
 from tracker.advisory import render_html_advisory
 from tracker.form.advisory import AdvisoryForm
@@ -154,7 +155,7 @@ def show_cve_json(cve):
     references = cve.reference.replace('\r', '').split('\n') if cve.reference else []
     packages = sorted({name for names in data['group_packages'].values() for name in names})
     advisories = data['advisories']
-    if not current_user.role.is_reporter:
+    if not user_can_handle_advisory():
         advisories = list(filter(lambda advisory: advisory.publication == Publication.published, advisories))
 
     json_data = OrderedDict()
@@ -187,7 +188,7 @@ def show_cve(cve):
             '{}'.format(data['issue'].id)
 
     advisories = data['advisories']
-    if not current_user.role.is_reporter:
+    if not user_can_handle_advisory():
         advisories = list(filter(lambda advisory: advisory.publication == Publication.published, advisories))
 
     return render_template('cve.html',
@@ -197,8 +198,8 @@ def show_cve(cve):
                            group_packages=data['group_packages'],
                            advisories=advisories,
                            can_watch_log=user_can_watch_log(),
-                           can_edit=user_can_edit_issue(advisories),
-                           can_delete=user_can_delete_issue(advisories))
+                           can_edit=user_can_edit_issue(data['advisories']),
+                           can_delete=user_can_delete_issue(data['advisories']))
 
 
 @tracker.route('/<regex("{}"):cve>/log'.format(cve_id_regex[1:-1]), methods=['GET'])
@@ -248,7 +249,8 @@ def get_group_data(avg):
     issues = sorted(issues, key=lambda item: item, reverse=True)
     packages = sorted(packages, key=lambda item: item.pkgname)
     versions = filter_duplicate_packages(sort_packages(list(versions)), True)
-    advisories_pending = group.status == Status.fixed and group.advisory_qualified and len(advisories) <= 0
+    visible_advisories = any(can_view_advisory(advisory) for advisory in advisories)
+    advisories_pending = group.status == Status.fixed and group.advisory_qualified and not visible_advisories
 
     return {
         'group': group,
@@ -275,7 +277,7 @@ def show_group_json(avg):
 
     group = data['group']
     advisories = data['advisories']
-    if not current_user.role.is_reporter:
+    if not user_can_handle_advisory():
         advisories = list(filter(lambda advisory: advisory.publication == Publication.published, advisories))
     issues = data['issues']
     packages = data['packages']
@@ -309,7 +311,7 @@ def show_group(avg):
 
     group = data['group']
     advisories = data['advisories']
-    if not current_user.role.is_reporter:
+    if not user_can_handle_advisory():
         advisories = list(filter(lambda advisory: advisory.publication == Publication.published, advisories))
     issues = data['issues']
     packages = data['packages']
@@ -333,8 +335,8 @@ def show_group(avg):
                            issue_type=issue_type,
                            bug_data=get_bug_data(issues, packages, versions, group),
                            advisories_pending=data['advisories_pending'],
-                           can_edit=user_can_edit_group(advisories),
-                           can_delete=user_can_delete_group(advisories),
+                           can_edit=user_can_edit_group(data['advisories']),
+                           can_delete=user_can_delete_group(data['advisories']),
                            can_handle_advisory=user_can_handle_advisory(),
                            can_watch_log=user_can_watch_log())
 
@@ -519,6 +521,7 @@ def show_generated_advisory_raw(advisory_id):
 def show_advisory(advisory_id, raw=False):
     entries = (db.session.query(Advisory, CVEGroup, CVEGroupPackage, CVE)
                .filter(Advisory.id == advisory_id)
+               .filter(can_view_advisory(Advisory))
                .join(CVEGroupPackage, Advisory.group_package)
                .join(CVEGroup, CVEGroupPackage.group)
                .join(CVEGroupEntry, CVEGroup.issues)
@@ -547,6 +550,8 @@ def show_advisory(advisory_id, raw=False):
 @tracker.route('/advisory/<regex("{}"):advisory_id>/generate'.format(advisory_regex[1:-1]), methods=['GET'])
 @tracker.route('/<regex("{}"):advisory_id>/generate'.format(advisory_regex[1:-1]), methods=['GET'])
 def show_generated_advisory(advisory_id, raw=False):
+    if not Advisory.query.filter(Advisory.id == advisory_id, can_view_advisory(Advisory)).first():
+        return not_found()
     advisory = generate_advisory(advisory_id, with_subject=True, raw=raw)
     if not advisory:
         return not_found()
@@ -558,6 +563,7 @@ def show_generated_advisory(advisory_id, raw=False):
 def show_advisory_log(advisory_id):
     advisory = (db.session.query(Advisory)
                 .filter(Advisory.id == advisory_id)
+                .filter(can_view_advisory(Advisory))
                 ).first()
     if not advisory:
         return not_found()
@@ -565,6 +571,7 @@ def show_advisory_log(advisory_id):
     return render_template('log/advisory_log.html',
                            title='{} - log'.format(advisory_id),
                            advisory=advisory,
+                           versions=advisory.versions.filter(can_view_advisory(version_class(Advisory))).all(),
                            can_watch_user_log=user_can_watch_user_log())
 
 
@@ -581,7 +588,8 @@ def show_log(page=1):
     pagination = (db.session.query(Transaction, VersionClassCVE, VersionClassGroup, VersionClassAdvisory)
                   .outerjoin(VersionClassCVE, Transaction.id == VersionClassCVE.transaction_id)
                   .outerjoin(VersionClassGroup, Transaction.id == VersionClassGroup.transaction_id)
-                  .outerjoin(VersionClassAdvisory, Transaction.id == VersionClassAdvisory.transaction_id)
+                  .outerjoin(VersionClassAdvisory, and_(Transaction.id == VersionClassAdvisory.transaction_id,
+                                                       can_view_advisory(VersionClassAdvisory)))
                   .order_by(Transaction.issued_at.desc(), Transaction.id.desc(),
                             VersionClassCVE.id, VersionClassGroup.id, VersionClassAdvisory.id)
                   .filter((VersionClassCVE.transaction_id.isnot(None)) |

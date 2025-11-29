@@ -18,6 +18,7 @@ from config import TRACKER_GROUP_URL
 from config import TRACKER_ISSUE_URL
 from config import TRACKER_MAILMAN_URL
 from tracker import db
+from tracker import tracker
 from tracker.model import CVE
 from tracker.model import Advisory
 from tracker.model import CVEGroup
@@ -30,6 +31,19 @@ from tracker.user import user_can_handle_advisory
 from tracker.util import chunks
 from tracker.util import issue_to_numeric
 from tracker.util import multiline_to_list
+
+
+@tracker.app_template_global()
+def can_view_advisory(advisory):
+    return user_can_handle_advisory() or (advisory is not None and advisory.publication == Publication.published)
+
+
+@tracker.after_request
+def prevent_draft_caching(response):
+    response.vary.add('Cookie')
+    if user_can_handle_advisory():
+        response.headers['Cache-Control'] = 'private, no-store'
+    return response
 
 
 def generate_advisory(advisory_id, with_subject=True, raw=True):

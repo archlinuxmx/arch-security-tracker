@@ -16,6 +16,7 @@ from tracker import tracker
 from tracker.advisory import advisory_fetch_reference_url_from_mailman
 from tracker.advisory import advisory_get_date_label
 from tracker.advisory import advisory_get_label
+from tracker.advisory import can_view_advisory
 from tracker.form.advisory import AdvisoryForm
 from tracker.form.advisory import AdvisoryPublishForm
 from tracker.model import CVE
@@ -37,6 +38,7 @@ ERROR_ADVISORY_ALREADY_EXISTS = 'Advisory already exists.'
 
 def get_advisory_data():
     entries = (db.session.query(Advisory, CVEGroup, CVEGroupPackage)
+               .filter(can_view_advisory(Advisory))
                .join(CVEGroupPackage, Advisory.group_package)
                .join(CVEGroup, CVEGroupPackage.group)
                .group_by(CVEGroupPackage.id)

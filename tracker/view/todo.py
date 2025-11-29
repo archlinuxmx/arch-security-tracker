@@ -13,6 +13,7 @@ from sqlalchemy import or_
 
 from tracker import db
 from tracker import tracker
+from tracker.advisory import can_view_advisory
 from tracker.model import CVE
 from tracker.model import Advisory
 from tracker.model import CVEGroup
@@ -47,13 +48,15 @@ def get_todo_data():
                             .join(CVEGroupPackage, Advisory.group_package)
                             .join(CVEGroup, CVEGroupPackage.group)
                             .filter(Advisory.publication == Publication.scheduled)
+                            .filter(can_view_advisory(Advisory))
                             .group_by(CVEGroupPackage.id)
                             .order_by(Advisory.created.desc())).all()
 
     unhandled_advisories = (db.session.query(CVEGroup, Package)
                             .join(CVEGroupPackage, CVEGroup.packages)
                             .join(Package, Package.name == CVEGroupPackage.pkgname)
-                            .outerjoin(Advisory)
+                            .outerjoin(Advisory, and_(Advisory.group_package_id == CVEGroupPackage.id,
+                                                     can_view_advisory(Advisory)))
                             .filter(CVEGroup.advisory_qualified)
                             .filter(CVEGroup.status == Status.fixed)
                             .group_by(CVEGroup.id)
@@ -76,7 +79,6 @@ def get_todo_data():
                                   CVE.issue_type == 'unknown'))
                       .order_by(CVE.id.desc())).all()
 
-    unknown_groups = CVEGroup.query.filter(CVEGroup.status == Status.unknown).all()
     unknown_groups = (db.session.query(CVEGroup, Package)
                         .join(CVEGroupPackage, CVEGroup.packages)
                         .join(Package, Package.name == CVEGroupPackage.pkgname)

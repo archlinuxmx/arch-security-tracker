@@ -155,7 +155,9 @@ def validate_group(data, group=None):
         elif field == 'packages' and not all(len(item) <= 64 and fullmatch(pkgname_regex, item) for item in values):
             fields[field] = ['Invalid package name.']
     affected = data.get('affected')
-    fixed = data.get('fixed') or None
+    fixed = data.get('fixed')
+    if fixed == '':
+        fixed = None
     if not valid_text(affected, 32) or not fullmatch(pkgver_regex, affected):
         fields['affected'] = ['An Arch package version is required.']
     if fixed is not None and (not valid_text(fixed, 32) or not fullmatch(pkgver_regex, fixed)):
@@ -256,7 +258,7 @@ def update_group(name):
 
     from tracker.api_catalog import serialize_group
 
-    if not fullmatch(r'AVG-[0-9]+', name):
+    if not fullmatch(r'AVG-[0-9]{1,18}', name):
         raise NotFound('Group not found.')
     data = read_json()
     if not data:
@@ -281,3 +283,94 @@ def update_group(name):
         apply_group(group, values)
     db.session.commit()
     return record_response(serialize_group(group))
+
+
+def serialize_draft(advisory):
+    from tracker.advisory import generate_advisory
+
+    group = advisory.group_package.group
+    content = generate_advisory(advisory.id) if group.fixed and group.issues else ''
+    return {'name': advisory.id, 'group': group.name, 'package': advisory.group_package.pkgname,
+            'type': advisory.advisory_type, 'publication': advisory.publication.name,
+            'workaround': advisory.workaround or '', 'impact': advisory.impact or '',
+            'content': content, 'updated': advisory.changed.isoformat(timespec='microseconds') + 'Z'}
+
+
+def get_draft(name, locked=False):
+    advisory = write_lock(Advisory, name) if locked else Advisory.query.filter_by(id=name).first()
+    if advisory is None:
+        raise NotFound('Advisory draft not found.')
+    if advisory.publication != Publication.scheduled:
+        raise APIError(409, 'already_published', 'Published advisories cannot be changed through the draft API.')
+    return advisory
+
+
+@api.route('/groups/<name>/advisory-drafts', methods=['POST'])
+@token_required(scope='advisories:write')
+def create_advisory_drafts(name):
+    from re import fullmatch
+
+    from sqlalchemy.exc import IntegrityError
+
+    from tracker.advisory import advisory_get_date_label
+    from tracker.advisory import advisory_get_label
+    from tracker.model.enum import Status
+
+    if not fullmatch(r'AVG-[0-9]{1,18}', name):
+        raise NotFound('Group not found.')
+    data = read_json()
+    if set(data) - {'type'} or ('type' in data and data['type'] not in advisory_types):
+        raise APIError(422, 'validation_error', 'Only a valid advisory type can be supplied.')
+    group = write_lock(CVEGroup, int(name[4:]))
+    if group.status != Status.fixed or not group.fixed or not group.issues or not group.packages:
+        raise APIError(409, 'group_not_fixed', 'An AVG with a reviewed fix, CVEs, and packages is required.')
+    if group_advisories(group):
+        raise APIError(409, 'already_exists', 'An advisory already exists for this group.')
+    types = set(entry.cve.issue_type for entry in group.issues)
+    default_type = next(iter(types)) if len(types) == 1 else 'multiple issues'
+    if default_type not in advisory_types:
+        default_type = 'multiple issues'
+    label = advisory_get_date_label()
+    prefix = 'ASA-{}-'.format(label)
+    existing = Advisory.query.filter(Advisory.id.startswith(prefix)).all()
+    number = max([int(advisory.id.rsplit('-', 1)[1]) for advisory in existing] or [0])
+    drafts = []
+    for package in sorted(group.packages, key=lambda package: package.pkgname):
+        number += 1
+        advisory = Advisory(id=advisory_get_label(label, number), group_package=package,
+                            advisory_type=data.get('type', default_type), publication=Publication.scheduled)
+        db.session.add(advisory)
+        drafts.append(advisory)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        raise APIError(409, 'concurrent_creation', 'An advisory was created concurrently; fetch the group before retrying.')
+    return record_response({'items': [serialize_draft(advisory) for advisory in drafts]}, 201)
+
+
+@api.route('/advisory-drafts/<name>', methods=['GET'])
+@token_required(scope='advisories:write')
+def read_advisory_draft(name):
+    return record_response(serialize_draft(get_draft(name)))
+
+
+@api.route('/advisory-drafts/<name>', methods=['PATCH'])
+@token_required(scope='advisories:write')
+def update_advisory_draft(name):
+    from tracker.api import valid_text
+
+    data = read_json()
+    if not data or set(data) - {'type', 'workaround', 'impact'}:
+        raise APIError(422, 'validation_error', 'Supply type, workaround, or impact; publication is not writable.')
+    if 'type' in data and data['type'] not in advisory_types:
+        raise APIError(422, 'validation_error', 'Invalid advisory type.')
+    for field in ('workaround', 'impact'):
+        if field in data and not valid_text(data[field], 4096):
+            raise APIError(422, 'validation_error', '{} must be Unicode text of at most 4096 characters.'.format(field))
+    advisory = get_draft(name, locked=True)
+    require_match(serialize_draft(advisory))
+    for key, value in data.items():
+        setattr(advisory, 'advisory_type' if key == 'type' else key, value)
+    db.session.commit()
+    return record_response(serialize_draft(advisory))
