@@ -2,10 +2,12 @@ from flask import url_for
 from werkzeug.exceptions import Forbidden
 from werkzeug.exceptions import NotFound
 
+from config import TRACKER_BUGTRACKER_URL
 from tracker.model.advisory import Advisory
 from tracker.model.cve import CVE
 from tracker.model.cve import issue_types
 from tracker.model.cvegroup import CVEGroup
+from tracker.model.cvegroupentry import CVEGroupEntry
 from tracker.model.enum import Affected
 from tracker.model.enum import Publication
 from tracker.model.enum import Status
@@ -13,7 +15,6 @@ from tracker.model.enum import UserRole
 from tracker.model.enum import affected_to_status
 from tracker.model.package import Package
 from tracker.view.add import ERROR_GROUP_WITH_ISSUE_EXISTS
-from tracker.view.show import get_bug_project
 
 from .conftest import DEFAULT_ADVISORY_ID
 from .conftest import DEFAULT_GROUP_ID
@@ -63,9 +64,7 @@ def set_and_assert_group_data(db, client, route, pkgnames=['foo'], issues=['CVE-
     if bug_ticket:
         assert f'href="{bug_ticket}"' in resp.data.decode('utf-8')
     else:
-        # Assert project and product category
-        project = get_bug_project([database])
-        assert 'project={}&amp;product_category=13'.format(project) in resp.data.decode('utf-8')
+        assert '/{}/ticket'.format(group.name) in resp.data.decode('utf-8')
 
 
 @create_package(name='foo')
@@ -607,3 +606,64 @@ def test_edit_group_does_nothing_when_data_is_same(db, client):
 
     group = CVEGroup.query.get(DEFAULT_GROUP_ID)
     assert group.changed == group_changed_old
+
+
+@create_package(name='libsigc++-docs', base='libsigc++')
+@create_group(id=77, packages=['libsigc++-docs'], status=Status.vulnerable, bug_ticket='1234')
+@logged_in
+def test_gitlab_ticket_uses_package_base_and_short_url(db, client):
+    page = client.get('/AVG-77/ticket').data
+    assert b'/packages/libsigcplusplus/-/issues/new?' in page
+    assert b'issue%5Btitle%5D=' in page
+    assert b'detailed_desc=' not in page
+    assert b'ticket-description' in page
+    page = client.get('/package/libsigc++-docs').data
+    assert b'/packages/libsigcplusplus/-/issues?state=opened' in page
+    ticket = 'https://gitlab.archlinux.org/archlinux/packaging/packages/libsigcplusplus/-/issues/73'
+    group = CVEGroup.query.get(77)
+    page = client.get('/AVG-77/edit').data.decode()
+    assert 'Archived ticket: 1234' in page
+    field = next(line for line in page.splitlines() if 'name="bug_ticket"' in line)
+    assert 'value=""' in field
+    data = default_group_dict(dict(pkgnames='libsigc++-docs', status=Affected.affected.name,
+                                   changed=str(group.changed), bug_ticket='', notes='Keep the archived reference'))
+    response = client.post('/AVG-77/edit', data=data, follow_redirects=True)
+    assert group.bug_ticket == '1234'
+    assert group.notes == 'Keep the archived reference'
+    assert TRACKER_BUGTRACKER_URL.format('1234') in response.data.decode()
+    for invalid in ('1234', '5678'):
+        data.update(changed=str(group.changed), bug_ticket=invalid)
+        assert b'Use an Arch GitLab issue URL.' in client.post('/AVG-77/edit', data=data).data
+        assert group.bug_ticket == '1234'
+    data.update(changed=str(group.changed), bug_ticket=ticket, replace_ticket=True)
+    response = client.post('/AVG-77/edit', data=data, follow_redirects=True)
+    assert group.bug_ticket == ticket
+    assert f'href="{ticket}"' in response.data.decode()
+    data.update(changed=str(group.changed), notes='Keep the GitLab reference')
+    del data['bug_ticket']
+    assert client.post('/AVG-77/edit', data=data).status_code == 302
+    assert group.bug_ticket == ticket
+    for invalid in ('javascript:alert(1)', '1234'):
+        data.update(changed=str(group.changed), bug_ticket=invalid)
+        assert b'Use an Arch GitLab issue URL.' in client.post('/AVG-77/edit', data=data).data
+        assert group.bug_ticket == ticket
+    group.bug_ticket = '1234'
+    db.session.commit()
+    data.update(changed=str(group.changed), bug_ticket='', replace_ticket=True)
+    assert client.post('/AVG-77/edit', data=data).status_code == 302
+    assert group.bug_ticket == ''
+
+    issue = CVE.query.one()
+    issue.issue_type = None
+    other = CVE.new('CVE-2026-12345')
+    other.issue_type = 'arbitrary code execution'
+    group.issues.append(CVEGroupEntry(cve=other))
+    db.session.commit()
+    response = client.get('/AVG-77/ticket')
+    assert response.status_code == 200
+    assert b'unknown' in response.data
+    parser = AssertionHTMLParser()
+    parser.feed(response.data.decode())
+    description = parser.get_element_by_id('ticket-description').data
+    for issue in (issue, other):
+        assert f'https://security.archlinux.org/{issue.id}' in description.splitlines()

@@ -53,7 +53,7 @@
 							{%- if group.bug_ticket %}
 						<td>{{ bug_ticket(group.bug_ticket) }}</td>
 							{%- elif group.status == "Vulnerable" %}
-						<td><a class='button button-table button-primary' href="https://bugs.archlinux.org/newtask?{{ bug_data | urlencode }}", accesskey='t'>Create</a></td>
+						<td><a class='button button-table button-primary' href="{{ url_for('tracker.prepare_group_ticket', avg=group.name) }}" accesskey='t'>Create</a></td>
 							{%- else %}
 						<td>None</td>
 							{%- endif %}

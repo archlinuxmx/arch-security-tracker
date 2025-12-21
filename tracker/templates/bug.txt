@@ -42,5 +42,6 @@ References
 {%- for reference in references %}
 {{ reference }}
 {%- endfor -%}
-{%- for issue in issues %}{{ TRACKER_ISSUE_URL.format(issue.id) }}
-{% endfor %}
+{%- for issue in cves %}
+{{ TRACKER_ISSUE_URL.format(issue.id) }}
+{%- endfor %}
