@@ -1,0 +1,10 @@
+{%- extends "base.html" -%}
+{% block content %}
+            <h1>{{ title }}</h1>
+            <p>Copy the description, then open a ticket in the relevant package base project.</p>
+            <p>{{ ticket.title }}</p>
+            <label for="ticket-description">Description</label>
+            <textarea id="ticket-description" class="full size" rows="20" readonly>{{ ticket.description }}</textarea>
+            <ul>{% for base, url in ticket.projects %}<li><a href="{{ url }}">Create ticket for {{ base }}</a></li>{% else %}<li>No current package base is known. Find the archived package project before filing a ticket.</li>{% endfor %}</ul>
+            <p><a href="/{{ group.name }}">Back to {{ group.name }}</a></p>
+{%- endblock %}

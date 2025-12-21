@@ -1,5 +1,7 @@
 from collections import OrderedDict
 from collections import defaultdict
+from urllib.parse import quote
+from urllib.parse import urlencode
 
 from flask import redirect
 from flask import render_template
@@ -51,33 +53,23 @@ from tracker.util import page_number
 from tracker.view.error import not_found
 
 
-def get_bug_project(databases):
-    bug_project_mapping = {
-        1: ['core', 'core-testing', 'extra', 'extra-testing'],
-        5: ['multilib', 'multilib-testing']
-    }
-
-    for category, repos in bug_project_mapping.items():
-        if all((database in repos for database in databases)):
-            return category
-
-    # Fallback
-    return 1
+def package_project_url(base):
+    return 'https://gitlab.archlinux.org/archlinux/packaging/packages/' + quote(base.replace('+', 'plus'), safe='')
 
 
 def get_bug_data(cves, pkgs, versions, group):
     references = []
-    references = [ref for ref in multiline_to_list(group.reference)
-                  if ref not in references]
-    list(map(lambda issue: references.extend(
-        [ref for ref in multiline_to_list(issue.reference) if ref not in references]), cves))
+    for record in [group, *cves]:
+        for reference in multiline_to_list(record.reference):
+            if reference not in references:
+                references.append(reference)
 
-    severity_sorted_issues = sorted(cves, key=lambda issue: issue.issue_type)
-    severity_sorted_issues = sorted(severity_sorted_issues, key=lambda issue: issue.severity)
+    severity_sorted_issues = sorted(cves, key=lambda issue: (issue.severity, issue.issue_type or 'unknown'))
     unique_issue_types = []
     for issue in severity_sorted_issues:
-        if issue.issue_type not in unique_issue_types:
-            unique_issue_types.append(issue.issue_type)
+        issue_type = issue.issue_type or 'unknown'
+        if issue_type not in unique_issue_types:
+            unique_issue_types.append(issue_type)
 
     bug_desc = render_template('bug.txt', cves=cves, group=group, references=references,
                                pkgs=pkgs, unique_issue_types=unique_issue_types,
@@ -90,25 +82,15 @@ def get_bug_data(cves, pkgs, versions, group):
     if TRACKER_SUMMARY_LENGTH_MAX != 0 and len(summary) > TRACKER_SUMMARY_LENGTH_MAX:
         summary = "[{}] [Security] {} (Multiple CVE's)".format(pkg_str, group_type)
 
-    # 5: critical, 4: high, 3: medium, 2: low, 1: very low.
-    severitiy_mapping = {
-        'unknown': 3,
-        'critical': 5,
-        'high': 4,
-        'medium': 3,
-        'low': 2,
-    }
-
-    task_severity = severitiy_mapping.get(group.severity.name)
-    project = get_bug_project((pkg.database for pkg in versions))
-
+    bases = (db.session.query(Package.base).filter(Package.name.in_([pkg.pkgname for pkg in pkgs]))
+             .distinct().order_by(Package.base).all())
     return {
-        'project': project,
-        'product_category': 13,  # security
-        'item_summary': summary,
-        'task_severity': task_severity,
-        'detailed_desc': bug_desc
+        'title': summary,
+        'description': bug_desc,
+        'projects': [(base, package_project_url(base) + '/-/issues/new?' +
+                      urlencode({'issue[title]': summary[:255]})) for base, in bases]
     }
+
 
 
 def get_cve_data(cve):
@@ -333,12 +315,20 @@ def show_group(avg):
                            versions=versions,
                            Status=Status,
                            issue_type=issue_type,
-                           bug_data=get_bug_data(issues, packages, versions, group),
                            advisories_pending=data['advisories_pending'],
                            can_edit=user_can_edit_group(data['advisories']),
                            can_delete=user_can_delete_group(data['advisories']),
                            can_handle_advisory=user_can_handle_advisory(),
                            can_watch_log=user_can_watch_log())
+
+
+@tracker.route('/<regex("{}"):avg>/ticket'.format(vulnerability_group_regex[1:-1]), methods=['GET'])
+def prepare_group_ticket(avg):
+    data = get_group_data(avg)
+    if not data:
+        return not_found()
+    return render_template('ticket.html', title='Prepare ticket for {}'.format(avg), group=data['group'],
+                           ticket=get_bug_data(data['issues'], data['packages'], data['versions'], data['group']))
 
 
 def get_package_data(pkgname):
@@ -388,9 +378,11 @@ def get_package_data(pkgname):
     advisories = sorted(advisories, key=lambda item: item.id, reverse=True)
     versions = filter_duplicate_packages(sort_packages(list(versions)), True)
     package = versions[0] if versions else None
+    projects = [(base, package_project_url(base)) for base in sorted({version.base for version in versions})]
 
     return {
         'package': package,
+        'projects': projects,
         'pkgname': pkgname,
         'versions': versions,
         'groups': groups,
