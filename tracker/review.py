@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import datetime
 
 from flask import abort
 from flask_login import current_user
@@ -10,6 +11,7 @@ from tracker.model import Advisory
 from tracker.model import CVEGroup
 from tracker.model import CVEGroupEntry
 from tracker.model import CVEGroupPackage
+from tracker.model.enum import highest_severity
 from tracker.model.review import ReviewEvent
 
 CVE_FIELDS = ('issue_type', 'description', 'severity', 'remote', 'reference', 'notes',
@@ -93,3 +95,47 @@ def record_event(record, action, rationale, revision=None):
                         revision=revision or content_revision(record), user_id=current_user.id)
     db.session.add(event)
     return event
+
+
+
+def merge_groups(source, destination, rationale):
+    if source.id == destination.id:
+        abort(409, 'Choose two different groups.')
+    if record_advisories(source) or record_advisories(destination):
+        abort(409, 'Groups with scheduled or published advisories cannot be merged.')
+    source_packages = sorted(item.pkgname for item in source.packages)
+    if source_packages != sorted(item.pkgname for item in destination.packages):
+        abort(409, 'Package sets must match before merging.')
+    for field in GROUP_FIELDS:
+        if field != 'reference' and getattr(source, field) != getattr(destination, field):
+            abort(409, 'Conflicting {} values must be reconciled before merging.'.format(field))
+    references = list(dict.fromkeys((destination.reference or '').splitlines() + (source.reference or '').splitlines()))
+    if len('\n'.join(references)) > CVEGroup.REFERENCES_LENGTH:
+        abort(409, 'Combined references exceed the group limit.')
+    previous_revision = content_revision(source)
+    existing = {entry.cve_id for entry in destination.issues}
+    for entry in source.issues:
+        if entry.cve_id not in existing:
+            destination.issues.append(CVEGroupEntry(cve=entry.cve))
+    destination.reference = '\n'.join(references)
+    destination.severity = highest_severity(entry.cve.severity for entry in destination.issues)
+    destination.changed = datetime.utcnow()
+    record_event(source, 'merged', json.dumps({'destination': destination.name, 'reason': rationale}),
+                 revision=previous_revision)
+    record_event(destination, 'required', 'Merged {}. {}'.format(source.name, rationale))
+    db.session.delete(source)
+
+
+def merged_destination(name):
+    seen = set()
+    while name not in seen:
+        seen.add(name)
+        if not name.startswith('AVG-') or not name[4:].isdigit():
+            return None
+        if CVEGroup.query.get(int(name[4:])):
+            return name
+        event = ReviewEvent.query.filter_by(target=name, action='merged').order_by(ReviewEvent.id.desc()).first()
+        if not event:
+            return None
+        name = json.loads(event.rationale)['destination']
+    return None

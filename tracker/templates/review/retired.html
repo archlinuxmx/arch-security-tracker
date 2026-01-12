@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+{% if destination %}<p>Retained group: <a href="{{ url_for('tracker.show_group', avg=destination) }}">{{ destination }}</a>.</p>{% endif %}
+<h2>Historical group versions</h2>
+{% for version in versions %}
+<h3>Transaction {{ version.transaction_id }}</h3>
+<p>{{ version.status }} — affected {{ version.affected }} — fixed {{ version.fixed }}</p>
+<pre>{{ version.reference or '' }}</pre><pre>{{ version.notes or '' }}</pre>
+{% endfor %}
+<h2>Private workflow history</h2>
+{% for event in events %}<p>{{ event.created }} — {{ event.user.name if event.user else 'Deleted user' }} — {{ event.action }}</p><pre>{{ event.rationale }}</pre>{% endfor %}
+{% endblock %}

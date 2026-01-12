@@ -59,3 +59,12 @@ class IntakeDecisionForm(BaseForm):
 class IntakePromoteForm(BaseForm):
     revision = IntegerField('Revision', validators=[DataRequired()])
     submit = SubmitField('Create public CVE from approved candidate')
+
+
+class MergeForm(BaseForm):
+    source = StringField('Group to retire', validators=[DataRequired(), Regexp(r'^AVG-[0-9]+$')])
+    destination = StringField('Group to retain', validators=[DataRequired(), Regexp(r'^AVG-[0-9]+$')])
+    source_revision = HiddenField(validators=[DataRequired()])
+    destination_revision = HiddenField(validators=[DataRequired()])
+    rationale = TextAreaField('Merge rationale (private)', validators=[DataRequired(), Length(max=2048)])
+    submit = SubmitField('Merge groups')

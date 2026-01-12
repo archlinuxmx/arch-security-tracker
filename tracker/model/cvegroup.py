@@ -26,6 +26,7 @@ class CVEGroup(db.Model):
 
     __versioned__ = {}
     __tablename__ = 'cve_group'
+    __table_args__ = {'sqlite_autoincrement': True}
 
     id = db.Column(db.Integer(), index=True, unique=True, primary_key=True, autoincrement=True)
     status = db.Column(Status.as_type(), nullable=False, default=Status.unknown, index=True)

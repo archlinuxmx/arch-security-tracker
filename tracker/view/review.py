@@ -10,6 +10,7 @@ from flask_login import current_user
 from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm.exc import StaleDataError
+from sqlalchemy_continuum import version_class
 from werkzeug.exceptions import HTTPException
 
 from tracker import db
@@ -18,14 +19,19 @@ from tracker.form.review import AssessmentForm
 from tracker.form.review import IntakeDecisionForm
 from tracker.form.review import IntakeForm
 from tracker.form.review import IntakePromoteForm
+from tracker.form.review import MergeForm
 from tracker.form.review import ReviewLookupForm
 from tracker.form.review import SignoffForm
 from tracker.model import CVE
+from tracker.model import CVEGroup
 from tracker.model.review import IntakeCandidate
 from tracker.model.review import ReviewEvent
 from tracker.review import assessment_for
 from tracker.review import content_revision
 from tracker.review import expect_revision
+from tracker.review import lock_record
+from tracker.review import merge_groups
+from tracker.review import merged_destination
 from tracker.review import record_event
 from tracker.review import review_revision
 from tracker.review import review_target
@@ -66,7 +72,8 @@ def review_index():
     latest = db.session.query(func.max(ReviewEvent.id)).filter(
         ReviewEvent.action.in_(('required', 'reviewed'))).group_by(ReviewEvent.target)
     events = ReviewEvent.query.filter(ReviewEvent.id.in_(latest)).order_by(ReviewEvent.id.desc()).limit(100).all()
-    return render_template('review/index.html', title='Review', form=form, events=events), 400 if request.method == 'POST' else 200
+    return render_template('review/index.html', title='Review', form=form, events=events,
+                           retired=ReviewEvent.query.filter_by(action='merged').order_by(ReviewEvent.id.desc()).limit(100).all()), 400 if request.method == 'POST' else 200
 
 
 @tracker.route('/review/<name>', methods=['GET', 'POST'])
@@ -196,3 +203,54 @@ def review_intake_promote(candidate_id):
                                rationale='Created ' + record.id, revision=str(candidate.revision), user_id=current_user.id))
     db.session.commit()
     return redirect(url_for('tracker.review_record', name=record.id))
+
+
+@tracker.route('/review/merge', methods=['GET', 'POST'])
+@private_review
+def review_merge():
+    form = MergeForm()
+    source = destination = None
+    if request.method == 'GET':
+        form.source.data = request.args.get('source', '')
+        form.destination.data = request.args.get('destination', '')
+        if form.source.data and form.destination.data:
+            source = review_target(form.source.data)
+            destination = review_target(form.destination.data)
+            if not isinstance(source, CVEGroup) or not isinstance(destination, CVEGroup):
+                abort(400, 'Only AVG records can be merged.')
+            form.source_revision.data = review_revision(source)
+            form.destination_revision.data = review_revision(destination)
+    elif form.validate_on_submit():
+        source = review_target(form.source.data)
+        destination = review_target(form.destination.data)
+        for record in sorted((source, destination), key=lambda item: item.id):
+            lock_record(record)
+        if review_revision(source) != form.source_revision.data or review_revision(destination) != form.destination_revision.data:
+            abort(409, 'A group or its assessment changed. Reload the preview.')
+        merge_groups(source, destination, form.rationale.data)
+        db.session.commit()
+        return redirect(url_for('tracker.review_record', name=destination.name))
+    return render_template('review/merge.html', title='Merge groups', form=form, source=source,
+                           destination=destination), 400 if request.method == 'POST' else 200
+
+
+@tracker.before_app_request
+def redirect_merged_group():
+    if request.endpoint not in ('tracker.show_group', 'tracker.show_group_json', 'tracker.show_group_log'):
+        return None
+    name = request.view_args['avg']
+    destination = merged_destination(name)
+    if destination and destination != name:
+        return redirect(url_for(request.endpoint, avg=destination), code=301)
+    return None
+
+
+@tracker.route('/review/retired/<name>', methods=['GET'])
+@private_review
+def review_retired(name):
+    event = ReviewEvent.query.filter_by(target=name, action='merged').first_or_404()
+    versions = version_class(CVEGroup).query.filter_by(id=int(name[4:])).order_by(
+        version_class(CVEGroup).transaction_id.desc()).all()
+    events = ReviewEvent.query.filter_by(target=name).order_by(ReviewEvent.id.desc()).all()
+    return render_template('review/retired.html', title='Retired ' + name, versions=versions,
+                           events=events, destination=merged_destination(event.target))
