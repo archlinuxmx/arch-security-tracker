@@ -1,5 +1,9 @@
+from sqlalchemy_continuum import version_class
+
 from tracker.model import CVE
+from tracker.model import Advisory
 from tracker.model import CVEGroup
+from tracker.model import CVEGroupEntry
 from tracker.model import CVEGroupPackage
 from tracker.model.review import IntakeCandidate
 from tracker.model.review import ReviewEvent
@@ -97,3 +101,45 @@ def test_intake_requires_approval_and_preserves_private_evidence(db, client):
     assert response.status_code == 302
     empty = IntakeCandidate.query.order_by(IntakeCandidate.id.desc()).first()
     assert empty.description == empty.reference == empty.evidence == ''
+
+
+@logged_in
+@create_group
+def test_merge_preserves_history_and_blocks_advisory_groups(db, client):
+    source = CVEGroup.query.first()
+    destination = CVEGroup(affected=source.affected, fixed=source.fixed, status=source.status,
+                           notes=source.notes, bug_ticket=source.bug_ticket, reference='https://example.org/fix')
+    destination.packages.append(CVEGroupPackage(pkgname='foo'))
+    destination.issues.append(CVEGroupEntry(cve=CVE.new('CVE-2026-54321')))
+    db.session.add(destination)
+    db.session.commit()
+    source, destination = destination, source
+    source_name = source.name
+    data = {'source': source.name, 'destination': destination.name,
+            'source_revision': review_revision(source), 'destination_revision': review_revision(destination),
+            'rationale': 'Same affected versions'}
+    assert client.get('/review/merge', query_string=data).status_code == 200
+    response = client.get('/review/merge', query_string=data, environ_overrides={'SCRIPT_NAME': '/tracker'})
+    for group in (source, destination):
+        assert ('href="/tracker/{}"'.format(group.name)).encode() in response.data
+    assert client.post('/review/merge', data=data).status_code == 302
+    assert len(destination.issues) == 2
+    assert ReviewEvent.query.filter_by(target=source_name, action='merged').one()
+    assert client.get('/' + source_name).status_code == 301
+    assert client.get('/review/retired/' + source_name).status_code == 200
+    response = client.get('/review/retired/' + source_name, environ_overrides={'SCRIPT_NAME': '/tracker'})
+    assert ('href="/tracker/{}"'.format(destination.name)).encode() in response.data
+    assert version_class(CVEGroup).query.filter_by(id=source.id).count() >= 2
+    other = CVEGroup(affected=destination.affected, status=destination.status, notes=destination.notes,
+                     bug_ticket=destination.bug_ticket)
+    other.packages.append(CVEGroupPackage(pkgname='foo'))
+    other.issues.append(CVEGroupEntry(cve=CVE.query.first()))
+    db.session.add(other)
+    db.session.flush()
+    db.session.add(Advisory(id='ASA-202609-1', group_package=other.packages[0]))
+    db.session.commit()
+    data.update(source=other.name, source_revision=review_revision(other), destination_revision=review_revision(destination))
+    assert client.post('/review/merge', data=data).status_code == 409
+    assert CVEGroup.query.get(other.id)
+    assert other.id > int(source_name[4:])
+    assert client.get('/' + source_name).status_code == 301
