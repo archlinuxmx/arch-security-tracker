@@ -20,6 +20,7 @@ from tracker.form.review import IntakeDecisionForm
 from tracker.form.review import IntakeForm
 from tracker.form.review import IntakePromoteForm
 from tracker.form.review import MergeForm
+from tracker.form.review import RevertForm
 from tracker.form.review import ReviewLookupForm
 from tracker.form.review import SignoffForm
 from tracker.model import CVE
@@ -34,6 +35,7 @@ from tracker.review import merge_groups
 from tracker.review import merged_destination
 from tracker.review import record_event
 from tracker.review import record_intake_event
+from tracker.review import revert_record
 from tracker.review import review_revision
 from tracker.review import review_target
 from tracker.review import target_name
@@ -257,3 +259,25 @@ def review_retired(name):
     events = ReviewEvent.query.filter_by(target=name).order_by(ReviewEvent.id.desc()).all()
     return render_template('review/retired.html', title='Retired ' + name, versions=versions,
                            events=events, destination=merged_destination(event.target))
+
+
+@tracker.route('/review/<name>/revert', methods=['GET', 'POST'])
+@private_review
+def review_revert(name):
+    record = review_target(name)
+    name = target_name(record)
+    history = version_class(type(record))
+    versions = (history.query.filter_by(id=record.id).filter(history.operation_type != 2)
+                .order_by(history.transaction_id.desc()).all())
+    form = RevertForm()
+    form.transaction_id.choices = [(version.transaction_id, '{}: {}'.format(version.transaction_id, version.changed))
+                                   for version in versions]
+    if form.validate_on_submit():
+        expect_revision(record, form.revision.data)
+        revert_record(record, form.transaction_id.data, form.rationale.data)
+        db.session.commit()
+        return redirect(url_for('tracker.review_record', name=name))
+    if request.method == 'GET':
+        form.revision.data = review_revision(record)
+    return review_page('review/revert.html', title='Restore ' + name, name=name, form=form,
+                       versions=versions)
