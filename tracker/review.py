@@ -4,6 +4,8 @@ from datetime import datetime
 
 from flask import abort
 from flask_login import current_user
+from sqlalchemy import or_
+from sqlalchemy_continuum import version_class
 
 from tracker import db
 from tracker.model import CVE
@@ -11,7 +13,10 @@ from tracker.model import Advisory
 from tracker.model import CVEGroup
 from tracker.model import CVEGroupEntry
 from tracker.model import CVEGroupPackage
+from tracker.model.cvegroup import valid_bug_ticket
+from tracker.model.enum import group_status
 from tracker.model.enum import highest_severity
+from tracker.model.enum import status_to_affected
 from tracker.model.review import ReviewEvent
 
 CVE_FIELDS = ('issue_type', 'description', 'severity', 'remote', 'reference', 'notes',
@@ -139,3 +144,53 @@ def merged_destination(name):
             return None
         name = json.loads(event.rationale)['destination']
     return None
+
+
+
+def historical_links(model, transaction_id, **filters):
+    version = version_class(model)
+    return version.query.filter_by(**filters).filter(
+        version.transaction_id <= transaction_id,
+        or_(version.end_transaction_id.is_(None), version.end_transaction_id > transaction_id),
+        version.operation_type != 2).all()
+
+
+def revert_record(record, transaction_id, rationale):
+    version = version_class(type(record)).query.filter_by(id=record.id, transaction_id=transaction_id).first_or_404()
+    if version.operation_type == 2:
+        abort(409, 'Deleted versions cannot be restored here.')
+    if record_advisories(record):
+        abort(409, 'Records with scheduled or published advisories cannot be reverted.')
+    if isinstance(record, CVE):
+        old_groups = {entry.group_id for entry in historical_links(CVEGroupEntry, transaction_id, cve_id=record.id)}
+        groups = [entry.group for entry in CVEGroupEntry.query.filter_by(cve_id=record.id)]
+        if old_groups != {group.id for group in groups}:
+            abort(409, 'Group relationships differ from that version. Reconcile them before reverting.')
+        fields = CVE_FIELDS
+    else:
+        old_cves = {entry.cve_id for entry in historical_links(CVEGroupEntry, transaction_id, group_id=record.id)}
+        old_packages = {entry.pkgname for entry in historical_links(CVEGroupPackage, transaction_id, group_id=record.id)}
+        if old_cves != {entry.cve_id for entry in record.issues} or old_packages != {entry.pkgname for entry in record.packages}:
+            abort(409, 'CVE or package relationships differ from that version. Reconcile them before reverting.')
+        if version.bug_ticket and not valid_bug_ticket(version.bug_ticket):
+            abort(409, 'Restoring this ticket requires an Arch GitLab issue URL.')
+        fields = GROUP_FIELDS
+        groups = [record]
+    values = {field: getattr(version, field) for field in fields}
+    if isinstance(record, CVEGroup):
+        values['status'] = group_status(status_to_affected(version.status),
+                                        [package.pkgname for package in record.packages],
+                                        version.fixed, version.status)
+    if all(getattr(record, field) == value for field, value in values.items()):
+        abort(409, 'This version already matches the current content.')
+    for field, value in values.items():
+        setattr(record, field, value)
+    record.changed = datetime.utcnow()
+    for group in groups:
+        severity = highest_severity(entry.cve.severity for entry in group.issues)
+        if group.severity != severity:
+            group.severity = severity
+            group.changed = datetime.utcnow()
+    db.session.flush()
+    record_event(record, 'reverted', 'Restored transaction {}. {}'.format(transaction_id, rationale))
+    record_event(record, 'required', 'Content restored from transaction {}; review again.'.format(transaction_id))

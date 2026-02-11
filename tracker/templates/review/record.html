@@ -2,7 +2,7 @@
 {% block content %}
 <h1>{{ title }}</h1>
 {% set public_url = url_for('tracker.show_cve', cve=name) if name.startswith('CVE-') else url_for('tracker.show_group', avg=name) %}
-<p><a href="{{ public_url }}">Public record</a></p>
+<p><a href="{{ public_url }}">Public record</a> · <a href="{{ url_for('tracker.review_revert', name=name) }}">Restore historical content</a></p>
 {% if stale %}<p>The record changed since its last assessment; review it again.</p>{% endif %}
 <form method="post">
 	{{ form.hidden_tag() }}

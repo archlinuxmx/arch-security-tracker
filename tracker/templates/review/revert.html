@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+<p>Restore scalar content as a new audited change. Relationships must still match the selected historical version. Records associated with any advisory cannot be restored here.</p>
+<form method="post">
+	{{ form.hidden_tag() }} {{ render_field(form.transaction_id) }}
+	{{ render_field(form.rationale) }} {{ form.submit() }}
+</form>
+<h2>Historical content</h2>
+{% for version in versions %}
+<h3>Transaction {{ version.transaction_id }}</h3>
+{% if name.startswith('CVE-') %}<p>{{ version.issue_type }} — {{ version.severity }} — {{ version.remote }}</p><pre>{{ version.description or '' }}</pre>
+{% else %}<p>{{ version.status }} — affected {{ version.affected }} — fixed {{ version.fixed }}</p>{% endif %}
+<pre>{{ version.reference or '' }}</pre><pre>{{ version.notes or '' }}</pre>
+{% endfor %}
+{% endblock %}

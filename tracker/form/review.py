@@ -68,3 +68,10 @@ class MergeForm(BaseForm):
     destination_revision = HiddenField(validators=[DataRequired()])
     rationale = TextAreaField('Merge rationale (private)', validators=[DataRequired(), Length(max=2048)])
     submit = SubmitField('Merge groups')
+
+
+class RevertForm(BaseForm):
+    revision = HiddenField(validators=[DataRequired()])
+    transaction_id = SelectField('Historical transaction', coerce=int, validators=[DataRequired()])
+    rationale = TextAreaField('Correction rationale (private)', validators=[DataRequired(), Length(max=2048)])
+    submit = SubmitField('Restore content as a new revision')

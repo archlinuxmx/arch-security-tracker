@@ -5,6 +5,8 @@ from tracker.model import Advisory
 from tracker.model import CVEGroup
 from tracker.model import CVEGroupEntry
 from tracker.model import CVEGroupPackage
+from tracker.model import Package
+from tracker.model.enum import Status
 from tracker.model.review import IntakeCandidate
 from tracker.model.review import ReviewEvent
 from tracker.model.user import User
@@ -12,6 +14,7 @@ from tracker.review import review_revision
 
 from .conftest import create_group
 from .conftest import create_issue
+from .conftest import create_package
 from .conftest import logged_in
 
 
@@ -143,3 +146,85 @@ def test_merge_preserves_history_and_blocks_advisory_groups(db, client):
     assert CVEGroup.query.get(other.id)
     assert other.id > int(source_name[4:])
     assert client.get('/' + source_name).status_code == 301
+
+
+@logged_in
+@create_issue(description='Original description')
+def test_revert_creates_new_version_and_keeps_history(db, client):
+    record = CVE.query.first()
+    transaction_id = record.versions.first().transaction_id
+    record.description = 'Incorrect edit'
+    db.session.commit()
+    before = record.versions.count()
+    data = {'revision': review_revision(record), 'transaction_id': transaction_id, 'rationale': 'Correct mistaken edit'}
+    assert client.get('/review/' + record.id + '/revert').status_code == 200
+    assert client.post('/review/' + record.id + '/revert', data=data).status_code == 302
+    assert record.description == 'Original description'
+    assert record.versions.count() == before + 1
+    assert ReviewEvent.query.filter_by(target=record.id, action='reverted').one()
+    assert client.post('/review/' + record.id + '/revert', data=data).status_code == 409
+
+
+@logged_in
+@create_group(bug_ticket='1234')
+def test_group_revert_rejects_changed_relationships(db, client):
+    record = CVEGroup.query.first()
+    record.notes = 'First assessment'
+    record.advisory_qualified = False
+    db.session.commit()
+    transaction_id = record.versions.order_by(None).order_by(version_class(CVEGroup).transaction_id.desc()).first().transaction_id
+    record.notes = 'Incorrect assessment'
+    db.session.commit()
+    path = '/review/' + record.name + '/revert'
+    response = client.get(path)
+    assert client.post(path, data={'revision': review_revision(record), 'transaction_id': transaction_id,
+                                   'rationale': 'Restore assessment'}).status_code == 409
+    assert record.notes == 'Incorrect assessment'
+    ticket = 'https://gitlab.archlinux.org/archlinux/packaging/packages/foo/-/issues/73'
+    record.bug_ticket = ticket
+    db.session.commit()
+    response = client.post(path, data={'revision': review_revision(record), 'transaction_id': transaction_id,
+                                       'rationale': 'Restore the old ticket'})
+    assert response.status_code == 409
+    assert b'Arch GitLab issue URL' in response.data
+    assert record.bug_ticket == ticket
+    transaction_id = record.versions.order_by(None).order_by(version_class(CVEGroup).transaction_id.desc()).first().transaction_id
+    record.notes = 'Another assessment'
+    db.session.commit()
+    assert client.post(path, data={'revision': review_revision(record), 'transaction_id': transaction_id,
+                                   'rationale': 'Restore assessment'}).status_code == 302
+    assert record.notes == 'Incorrect assessment'
+    record.issues.append(CVEGroupEntry(cve=CVE.new('CVE-2026-99999')))
+    record.notes = 'New scope'
+    db.session.commit()
+    assert client.post(path, data={'revision': review_revision(record), 'transaction_id': transaction_id,
+                                   'rationale': 'Would discard a CVE'}).status_code == 409
+    assert len(record.issues) == 2
+    assert record.notes == 'New scope'
+
+
+@logged_in
+@create_package(name='foo', version='2.0-1')
+@create_group(fixed='2.0-1', status=Status.fixed)
+def test_group_revert_uses_current_repository_versions(db, client):
+    record = CVEGroup.query.one()
+    record.notes = 'Confirmed the fix'
+    db.session.commit()
+    transaction_id = record.versions.order_by(None).order_by(version_class(CVEGroup).transaction_id.desc()).first().transaction_id
+
+    Package.query.one().version = '1.5-1'
+    record.status = Status.vulnerable
+    record.notes = 'Incorrect replacement notes'
+    db.session.commit()
+    response = client.post('/review/' + record.name + '/revert',
+                           data={'revision': review_revision(record), 'transaction_id': transaction_id,
+                                 'rationale': 'Restore the original notes'})
+    assert response.status_code == 302
+    assert record.notes == 'Confirmed the fix'
+    assert record.fixed == '2.0-1'
+    assert record.status == Status.vulnerable
+    response = client.post('/review/' + record.name + '/revert',
+                           data={'revision': review_revision(record), 'transaction_id': transaction_id,
+                                 'rationale': 'Repeat the restoration'})
+    assert response.status_code == 409
+    assert ReviewEvent.query.filter_by(target=record.name, action='reverted').count() == 1
