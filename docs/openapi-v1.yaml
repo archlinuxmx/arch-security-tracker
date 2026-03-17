@@ -1,48 +1,47 @@
 openapi: 3.0.3
 info:
-  title: Arch Linux Security Tracker CVE API
+  title: Arch Linux Security Tracker API
   version: '1'
-  description: Public CVE reads and token-authenticated, create-only writes.
+  description: Public CVE, package, AVG, published advisory and synchronization reads; scoped token writes.
+    JSON request bodies are limited to 65536 bytes. Public records include notes. Public GET/HEAD responses
+    support conditional reads; authenticated drafts and mutations are no-store. PATCH requires the exact strong
+    ETag from a fresh detail GET in If-Match. Tokens have one scope and expire after 90 days. See api-v1.md,
+    api-catalog.md and api-workflow.md.
 servers:
-  - url: /api/v1
+  - {url: /api/v1}
 security: []
 paths:
   /cves:
     get:
       operationId: listCVEs
-      summary: List CVEs, including records without AVGs
-      description: Lexicographic identifier pagination, not a snapshot or update feed.
+      summary: List and filter CVEs, including orphan records
+      description: Filters combine with AND. q searches literal substrings in identifier, description and notes.
+        Lexical identifier pagination is not a snapshot or synchronization checkpoint.
       parameters:
-        - name: limit
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/CVEAfter'}
+        - {$ref: '#/components/parameters/PackageFilter'}
+        - name: orphan
           in: query
-          schema: {type: integer, minimum: 1, maximum: 100, default: 50}
-        - name: after
+          schema:
+            type: string
+            enum: ['true', 'false']
+        - name: severity
           in: query
-          description: Return identifiers strictly greater than this cursor.
-          schema: {$ref: '#/components/schemas/CVEName'}
+          schema: {$ref: '#/components/schemas/Severity'}
+        - name: q
+          in: query
+          schema: {type: string}
+        - {$ref: '#/components/parameters/IfNoneMatch'}
       responses:
-        '200':
-          description: CVE page
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items, next_cursor]
-                properties:
-                  items:
-                    type: array
-                    items: {$ref: '#/components/schemas/CVE'}
-                  next_cursor: {type: string, nullable: true}
-        '400': {$ref: '#/components/responses/Error'}
+        '200': {$ref: '#/components/responses/CVEPage'}
         default: {$ref: '#/components/responses/Error'}
+        '304': {$ref: '#/components/responses/NotModified'}
     post:
       operationId: createCVE
-      summary: Create a CVE without an AVG
-      description: >-
-        Requires cves:create scope and an active reporter or higher. Publishes all
-        fields immediately, including notes; audit history names the token owner.
-        Validates before insertion. Duplicate identifiers return 409 without
-        merging any fields, including concurrent inserts. Maximum body 65,536 bytes.
+      summary: Create a public CVE without an AVG
+      description: 'Requires cves:create scope. Immediately publishes all fields including notes. Duplicate
+        identifier: 409 without merging.'
       security:
         - bearerAuth: []
       requestBody:
@@ -50,128 +49,348 @@ paths:
         content:
           application/json:
             schema: {$ref: '#/components/schemas/CVECreate'}
-            example:
-              name: CVE-2099-99999999
-              description: Synthetic local demonstration only.
       responses:
-        '201':
-          description: CVE created
-          headers:
-            Location:
-              description: Relative URL of the new CVE.
-              schema: {type: string}
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/CVE'}
-        '400': {$ref: '#/components/responses/Error'}
-        '401': {$ref: '#/components/responses/Error'}
-        '403': {$ref: '#/components/responses/Error'}
-        '409': {$ref: '#/components/responses/Error'}
-        '413': {$ref: '#/components/responses/Error'}
-        '415': {$ref: '#/components/responses/Error'}
-        '422': {$ref: '#/components/responses/Error'}
+        '201': {$ref: '#/components/responses/CVECreated'}
         default: {$ref: '#/components/responses/Error'}
   /cves/{name}:
+    parameters:
+      - {$ref: '#/components/parameters/CVEName'}
     get:
       operationId: getCVE
-      summary: Read one CVE
+      summary: Read one public CVE
       parameters:
-        - name: name
-          in: path
-          required: true
-          schema: {$ref: '#/components/schemas/CVEName'}
+        - {$ref: '#/components/parameters/IfNoneMatch'}
       responses:
-        '200':
-          description: CVE record; all fields are public
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/CVE'}
-        '404': {$ref: '#/components/responses/Error'}
+        '200': {$ref: '#/components/responses/CVE'}
         default: {$ref: '#/components/responses/Error'}
+        '304': {$ref: '#/components/responses/NotModified'}
+    patch:
+      operationId: updateCVE
+      summary: Update reviewed CVE fields
+      description: Requires cves:update scope. Advisory-linked records additionally require Security Team membership.
+        Refreshes linked group severity and scheduled advisory types.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CVEPatch'}
+      responses:
+        '200': {$ref: '#/components/responses/CVE'}
+        default: {$ref: '#/components/responses/Error'}
+        '412': {$ref: '#/components/responses/Error'}
+        '428': {$ref: '#/components/responses/Error'}
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+  /packages:
+    get:
+      operationId: listPackages
+      summary: List repository package variants
+      description: Exact filters except q, a literal substring in name/base/upstream URL. Database-row cursor
+        is not a snapshot; periodically refresh the complete catalogue.
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/NumericAfter'}
+        - name: name
+          in: query
+          schema: {type: string}
+        - name: base
+          in: query
+          schema: {type: string}
+        - name: repository
+          in: query
+          schema: {type: string}
+        - name: architecture
+          in: query
+          schema: {type: string}
+        - name: q
+          in: query
+          schema: {type: string}
+        - {$ref: '#/components/parameters/IfNoneMatch'}
+      responses:
+        '200': {$ref: '#/components/responses/PackagePage'}
+        default: {$ref: '#/components/responses/Error'}
+        '304': {$ref: '#/components/responses/NotModified'}
+  /groups:
+    get:
+      operationId: listGroups
+      summary: List vulnerability groups
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/NumericAfter'}
+        - {$ref: '#/components/parameters/PackageFilter'}
+        - name: cve
+          in: query
+          schema: {$ref: '#/components/schemas/CVEName'}
+        - name: status
+          in: query
+          schema: {$ref: '#/components/schemas/Status'}
+        - {$ref: '#/components/parameters/IfNoneMatch'}
+      responses:
+        '200': {$ref: '#/components/responses/GroupPage'}
+        default: {$ref: '#/components/responses/Error'}
+        '304': {$ref: '#/components/responses/NotModified'}
+    post:
+      operationId: createGroup
+      summary: Create a reviewed vulnerability group
+      description: 'Requires groups:create scope. '
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GroupCreate'}
+      responses:
+        '201': {$ref: '#/components/responses/GroupCreated'}
+        default: {$ref: '#/components/responses/Error'}
+  /groups/{name}:
+    parameters:
+      - {$ref: '#/components/parameters/GroupName'}
+    get:
+      operationId: getGroup
+      summary: Read one AVG and its relationships
+      parameters:
+        - {$ref: '#/components/parameters/IfNoneMatch'}
+      responses:
+        '200': {$ref: '#/components/responses/Group'}
+        default: {$ref: '#/components/responses/Error'}
+        '304': {$ref: '#/components/responses/NotModified'}
+    patch:
+      operationId: updateGroup
+      summary: Update AVG memberships and assessment
+      description: Requires groups:update scope. Advisory-linked records additionally require Security Team
+        membership.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GroupPatch'}
+      responses:
+        '200': {$ref: '#/components/responses/Group'}
+        default: {$ref: '#/components/responses/Error'}
+        '412': {$ref: '#/components/responses/Error'}
+        '428': {$ref: '#/components/responses/Error'}
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
+  /advisories:
+    get:
+      operationId: listAdvisories
+      summary: List published advisories
+      description: Drafts are excluded even for authenticated users.
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/ASAAfter'}
+        - {$ref: '#/components/parameters/PackageFilter'}
+        - {$ref: '#/components/parameters/IfNoneMatch'}
+      responses:
+        '200': {$ref: '#/components/responses/AdvisoryPage'}
+        default: {$ref: '#/components/responses/Error'}
+        '304': {$ref: '#/components/responses/NotModified'}
+  /advisories/{name}:
+    parameters:
+      - {$ref: '#/components/parameters/ASAName'}
+    get:
+      operationId: getAdvisory
+      summary: Read one published advisory
+      description: Scheduled or missing advisories return 404.
+      parameters:
+        - {$ref: '#/components/parameters/IfNoneMatch'}
+      responses:
+        '200': {$ref: '#/components/responses/Advisory'}
+        default: {$ref: '#/components/responses/Error'}
+        '304': {$ref: '#/components/responses/NotModified'}
+  /changes:
+    get:
+      operationId: listChanges
+      summary: Read resource invalidations from audit transactions
+      description: Omit after to capture a current checkpoint before enumerating resources; items is empty.
+        after=0 replays retained history. next_cursor is always a checkpoint, never null. limit bounds scanned
+        transactions, not items. Follow has_more even on an empty page. Refetch named current resources; remove
+        deleted items or detail routes returning 404. Apply the page before saving its checkpoint. Includes
+        relationship changes and previously published advisory tombstones; never reveals unpublished draft
+        identifiers. Requires retained Continuum history and SQLite serialized writes; direct SQL and unversioned
+        package refreshes are outside this feed. Rebuild caches after database restoration or replacement.
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/NumericAfter'}
+        - {$ref: '#/components/parameters/IfNoneMatch'}
+      responses:
+        '200': {$ref: '#/components/responses/Changes'}
+        default: {$ref: '#/components/responses/Error'}
+        '304': {$ref: '#/components/responses/NotModified'}
+  /groups/{name}/advisory-drafts:
+    parameters:
+      - {$ref: '#/components/parameters/GroupName'}
+    post:
+      operationId: createAdvisoryDrafts
+      summary: Generate one private draft per AVG package
+      description: Requires advisories:write scope. Security Team role required. Group must have fixed status,
+        a fixed version, CVEs and packages, and no existing advisory. Empty object selects a derived type.
+        Does not publish or send mail.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DraftCreate'}
+      responses:
+        '201': {$ref: '#/components/responses/DraftBatch'}
+        default: {$ref: '#/components/responses/Error'}
+  /advisory-drafts/{name}:
+    parameters:
+      - {$ref: '#/components/parameters/ASAName'}
+    get:
+      operationId: readAdvisoryDraft
+      summary: Read a private generated draft and its ETag
+      description: 'Requires advisories:write and Security Team role. Cache-Control: no-store. Published records
+        return 409.'
+      parameters: []
+      responses:
+        '200': {$ref: '#/components/responses/Draft'}
+        default: {$ref: '#/components/responses/Error'}
+      security:
+        - bearerAuth: []
+    patch:
+      operationId: updateAdvisoryDraft
+      summary: Edit a private draft
+      description: Requires advisories:write scope. Security Team role required. Only type, workaround and
+        impact are writable. Publication remains a separate browser action.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DraftPatch'}
+      responses:
+        '200': {$ref: '#/components/responses/Draft'}
+        default: {$ref: '#/components/responses/Error'}
+        '412': {$ref: '#/components/responses/Error'}
+        '428': {$ref: '#/components/responses/Error'}
+      parameters:
+        - {$ref: '#/components/parameters/IfMatch'}
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      description: >-
-        Personal token from /tokens, with cves:create scope and 90-day expiry.
-        Browser cookies do not authorize writes. Token management requires login
-        and CSRF-protected browser forms. Revocation takes effect immediately.
+      description: 'Personal token created through the CSRF-protected /tokens browser page. One scope per token:
+        cves:create, cves:update, groups:create, groups:update, or advisories:write. Expires after 90 days;
+        owner activity and role are checked on every request. Reporter or higher is required; advisories:write
+        requires Security Team or administrator. Browser cookies do not authorize API operations.'
   responses:
     Error:
-      description: >-
-        JSON error. 400 bad_request/invalid_json; 401 unauthorized; 403 forbidden;
-        404 not_found; 405 method_not_allowed; 409 already_exists;
-        413 payload_too_large; 415 unsupported_media_type; 422 validation_error;
-        500 internal_error. 401 includes WWW-Authenticate with a Bearer challenge.
+      description: 'JSON error. 400 bad_request/invalid_json; 401 unauthorized (Bearer challenge); 403 forbidden;
+        404 not_found; 405 method_not_allowed; 409 already_exists/already_grouped/advisory_exists/already_published/group_not_fixed/concurrent_creation;
+        412 precondition_failed; 413 payload_too_large; 415 unsupported_media_type; 422 validation_error; 428
+        precondition_required; 500 internal_error. All errors use Cache-Control: no-store. fields is present
+        when individual field errors are available.'
       content:
         application/json:
           schema: {$ref: '#/components/schemas/Error'}
+    NotModified:
+      description: Unchanged public representation. No response body.
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+    CVE:
+      description: CVE representation.
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/CVE'}
+    CVEPage:
+      description: CVEPage representation.
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/CVEPage'}
+    PackagePage:
+      description: PackagePage representation.
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/PackagePage'}
+    Group:
+      description: Group representation.
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Group'}
+    GroupPage:
+      description: GroupPage representation.
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/GroupPage'}
+    Advisory:
+      description: Advisory representation.
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Advisory'}
+    AdvisoryPage:
+      description: AdvisoryPage representation.
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AdvisoryPage'}
+    Changes:
+      description: Changes representation.
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Changes'}
+    Draft:
+      description: Draft representation.
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Draft'}
+    DraftBatch:
+      description: DraftBatch representation.
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/DraftBatch'}
+    CVECreated:
+      description: CVE created.
+      headers:
+        Location: {$ref: '#/components/headers/Location'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/CVE'}
+    GroupCreated:
+      description: Group created.
+      headers:
+        Location: {$ref: '#/components/headers/Location'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Group'}
   schemas:
     CVEName:
       type: string
-      pattern: '^CVE-[0-9]{4}-[0-9]{4,}$'
+      pattern: ^CVE-[0-9]{4}-[0-9]{4,}$
       maxLength: 64
       description: Syntax validation only; does not establish CVE assignment.
-    CVECreate:
-      type: object
-      additionalProperties: false
-      required: [name]
-      description: >-
-        Omitted fields use defaults; explicit null is invalid. Text must contain
-        valid Unicode scalar values. application/*+json is also accepted.
-      properties:
-        name: {$ref: '#/components/schemas/CVEName'}
-        type:
-          type: string
-          default: unknown
-          enum:
-            - unknown
-            - access restriction bypass
-            - arbitrary code execution
-            - arbitrary command execution
-            - arbitrary file overwrite
-            - arbitrary filesystem access
-            - arbitrary file upload
-            - authentication bypass
-            - certificate verification bypass
-            - content spoofing
-            - cross-site request forgery
-            - cross-site scripting
-            - denial of service
-            - directory traversal
-            - incorrect calculation
-            - information disclosure
-            - insufficient validation
-            - man-in-the-middle
-            - open redirect
-            - private key recovery
-            - privilege escalation
-            - proxy injection
-            - same-origin policy bypass
-            - sandbox escape
-            - session hijacking
-            - signature forgery
-            - silent downgrade
-            - sql injection
-            - time alteration
-            - url request injection
-            - xml external entity injection
-        severity: {$ref: '#/components/schemas/Severity'}
-        vector: {$ref: '#/components/schemas/Vector'}
-        description: {type: string, maxLength: 4096, default: ''}
-        notes: {type: string, maxLength: 4096, default: '', description: Public notes.}
-        references:
-          type: array
-          default: []
-          description: >-
-            HTTP(S) URLs without whitespace or control characters. Deduplicated
-            in first-occurrence order. Newline-joined total after deduplication
-            must not exceed 4096 characters. URLs are not fetched.
-          items: {type: string, format: uri, pattern: '^[Hh][Tt][Tt][Pp][Ss]?://', maxLength: 4096}
     CVE:
       type: object
-      required: [name, type, severity, vector, description, notes, references, groups, packages, created, updated]
+      required: [name, type, severity, vector, description, notes, references, groups, packages, created, updated,
+        cvss]
       properties:
         name: {type: string}
         type: {type: string}
@@ -179,7 +398,9 @@ components:
         vector: {$ref: '#/components/schemas/Vector'}
         description: {type: string}
         notes: {type: string, description: Public notes.}
-        references: {type: array, items: {type: string}}
+        references:
+          type: array
+          items: {type: string}
         groups:
           type: array
           uniqueItems: true
@@ -194,7 +415,8 @@ components:
         updated:
           type: string
           format: date-time
-          description: Stored changed timestamp; not reliable for incremental synchronization.
+          description: Stored UTC modification timestamp. Use /changes, not timestamps, for synchronization.
+        cvss: {$ref: '#/components/schemas/CVSS'}
     Severity:
       type: string
       default: unknown
@@ -215,4 +437,404 @@ components:
             message: {type: string}
             fields:
               type: object
-              additionalProperties: {type: array, items: {type: string}}
+              additionalProperties:
+                type: array
+                items: {type: string}
+    IssueType:
+      type: string
+      enum:
+        - unknown
+        - access restriction bypass
+        - arbitrary code execution
+        - arbitrary command execution
+        - arbitrary file overwrite
+        - arbitrary filesystem access
+        - arbitrary file upload
+        - authentication bypass
+        - certificate verification bypass
+        - content spoofing
+        - cross-site request forgery
+        - cross-site scripting
+        - denial of service
+        - directory traversal
+        - incorrect calculation
+        - information disclosure
+        - insufficient validation
+        - man-in-the-middle
+        - open redirect
+        - private key recovery
+        - privilege escalation
+        - proxy injection
+        - same-origin policy bypass
+        - sandbox escape
+        - session hijacking
+        - signature forgery
+        - silent downgrade
+        - sql injection
+        - time alteration
+        - url request injection
+        - xml external entity injection
+    References:
+      type: array
+      default: []
+      description: HTTP(S) URLs without whitespace or control characters. Deduplicated in first-occurrence
+        order. Newline-joined total after deduplication must not exceed 4096 characters. URLs are not fetched.
+      items: {type: string, format: uri, pattern: '^[Hh][Tt][Tt][Pp][Ss]?://', maxLength: 4096}
+    Text: {type: string, maxLength: 4096, description: Valid Unicode scalar values.}
+    CVSS:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required: [version, score, vector, source]
+      description: Source assessment, independent of Arch severity. Null clears it. Vector syntax and prefix
+        are checked; score is not recalculated.
+      properties:
+        version:
+          type: string
+          enum: ['3.0', '3.1', '4.0']
+        score: {type: number, minimum: 0, maximum: 10, multipleOf: 0.1}
+        vector: {type: string, maxLength: 256, pattern: '^CVSS:(3\.0|3\.1|4\.0)(/[A-Z][A-Z0-9]*:[A-Za-z0-9]+)+$'}
+        source: {type: string, format: uri, maxLength: 2048, description: HTTP(S) source URL without whitespace/control
+            characters.}
+    CVECreate:
+      type: object
+      additionalProperties: false
+      required: [name]
+      description: Omitted type/severity/vector default to unknown, text to empty, references to [], CVSS to
+        null. Null is accepted only for cvss.
+      properties:
+        name: {$ref: '#/components/schemas/CVEName'}
+        type: {$ref: '#/components/schemas/IssueType'}
+        severity: {$ref: '#/components/schemas/Severity'}
+        vector: {$ref: '#/components/schemas/Vector'}
+        description: {$ref: '#/components/schemas/Text'}
+        notes: {$ref: '#/components/schemas/Text'}
+        references: {$ref: '#/components/schemas/References'}
+        cvss: {$ref: '#/components/schemas/CVSS'}
+    CVEPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: Only supplied fields change. Identifier cannot be renamed. Null is accepted only for cvss.
+      properties:
+        type: {$ref: '#/components/schemas/IssueType'}
+        severity: {$ref: '#/components/schemas/Severity'}
+        vector: {$ref: '#/components/schemas/Vector'}
+        description: {$ref: '#/components/schemas/Text'}
+        notes: {$ref: '#/components/schemas/Text'}
+        references: {$ref: '#/components/schemas/References'}
+        cvss: {$ref: '#/components/schemas/CVSS'}
+    GroupName: {type: string, pattern: '^AVG-[0-9]{1,18}$'}
+    ASAName: {type: string, pattern: '^ASA-[0-9]{6}-[0-9]{1,8}$'}
+    Status:
+      type: string
+      enum: [unknown, vulnerable, testing, fixed, not_affected]
+    Assessment:
+      type: string
+      enum: [unknown, affected, not_affected]
+      default: unknown
+    Version: {type: string, maxLength: 32, description: 'Arch package version with pkgrel, optionally epoch;
+        compared using libalpm.'}
+    BugTicket:
+      type: string
+      maxLength: 512
+      default: ''
+      description: Empty or an HTTPS Arch packaging-project GitLab issue URL.
+      example: https://gitlab.archlinux.org/archlinux/packaging/packages/example/-/issues/73
+    Package:
+      type: object
+      required: [name, base, version, repository, architecture, description, upstream_url]
+      properties:
+        name: {type: string}
+        base: {type: string}
+        version: {type: string}
+        repository: {type: string}
+        architecture: {type: string}
+        description: {type: string}
+        upstream_url: {type: string, nullable: true}
+    GroupCreate:
+      type: object
+      additionalProperties: false
+      required: [cves, packages, affected]
+      description: Packages must exist and share a base; missing CVEs are created as unknown. Existing package/CVE
+        overlaps return 409. Status/severity are derived, not writable.
+      properties:
+        cves:
+          type: array
+          minItems: 1
+          items: {$ref: '#/components/schemas/CVEName'}
+        packages:
+          type: array
+          minItems: 1
+          items: {type: string, maxLength: 64}
+        affected: {$ref: '#/components/schemas/Version'}
+        fixed: {type: string, maxLength: 32, nullable: true, description: Null or empty means unknown; otherwise
+            newer than affected.}
+        assessment: {$ref: '#/components/schemas/Assessment'}
+        bug_ticket: {$ref: '#/components/schemas/BugTicket'}
+        references: {$ref: '#/components/schemas/References'}
+        notes: {$ref: '#/components/schemas/Text'}
+        advisory_qualified: {type: boolean, default: true}
+    GroupPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: Only supplied fields change. Arrays replace memberships. Existing removed-from-repository
+        package names may be retained. Advisory-linked packages cannot be removed. Omitting bug_ticket
+        preserves the stored reference. Submitted values must be GitLab URLs or empty; numeric IDs are rejected.
+      properties:
+        cves:
+          type: array
+          minItems: 1
+          items: {$ref: '#/components/schemas/CVEName'}
+        packages:
+          type: array
+          minItems: 1
+          items: {type: string, maxLength: 64}
+        affected: {$ref: '#/components/schemas/Version'}
+        fixed: {type: string, maxLength: 32, nullable: true, description: Null or empty means unknown; otherwise
+            newer than affected.}
+        assessment: {$ref: '#/components/schemas/Assessment'}
+        bug_ticket: {$ref: '#/components/schemas/BugTicket'}
+        references: {$ref: '#/components/schemas/References'}
+        notes: {$ref: '#/components/schemas/Text'}
+        advisory_qualified: {type: boolean, default: true}
+    Group:
+      type: object
+      required:
+        - name
+        - cves
+        - packages
+        - affected
+        - fixed
+        - status
+        - assessment
+        - severity
+        - references
+        - notes
+        - bug_ticket
+        - advisory_qualified
+        - created
+        - updated
+      properties:
+        name: {$ref: '#/components/schemas/GroupName'}
+        cves:
+          type: array
+          items: {$ref: '#/components/schemas/CVEName'}
+        packages:
+          type: array
+          items: {type: string}
+        affected: {type: string}
+        fixed: {type: string, nullable: true}
+        status: {$ref: '#/components/schemas/Status'}
+        assessment: {$ref: '#/components/schemas/Assessment'}
+        severity: {$ref: '#/components/schemas/Severity'}
+        references:
+          type: array
+          items: {type: string}
+        notes: {type: string}
+        bug_ticket: {type: string}
+        advisory_qualified: {type: boolean}
+        created: {type: string, format: date-time}
+        updated: {type: string, format: date-time}
+    Advisory:
+      type: object
+      required: [name, type, package, group, cves, affected, fixed, severity, workaround, impact, content,
+        references, created, updated]
+      properties:
+        name: {$ref: '#/components/schemas/ASAName'}
+        type: {type: string}
+        package: {type: string}
+        group: {$ref: '#/components/schemas/GroupName'}
+        cves:
+          type: array
+          items: {$ref: '#/components/schemas/CVEName'}
+        affected: {type: string}
+        fixed: {type: string, nullable: true}
+        severity: {$ref: '#/components/schemas/Severity'}
+        workaround: {type: string}
+        impact: {type: string}
+        content: {type: string}
+        references:
+          type: array
+          items: {type: string}
+        created: {type: string, format: date-time}
+        updated: {type: string, format: date-time}
+      description: Published advisory only. Group metadata is current; content is the stored publication text.
+    AdvisoryType:
+      type: string
+      enum:
+        - multiple issues
+        - access restriction bypass
+        - arbitrary code execution
+        - arbitrary command execution
+        - arbitrary file overwrite
+        - arbitrary filesystem access
+        - arbitrary file upload
+        - authentication bypass
+        - certificate verification bypass
+        - content spoofing
+        - cross-site request forgery
+        - cross-site scripting
+        - denial of service
+        - directory traversal
+        - incorrect calculation
+        - information disclosure
+        - insufficient validation
+        - man-in-the-middle
+        - open redirect
+        - private key recovery
+        - privilege escalation
+        - proxy injection
+        - same-origin policy bypass
+        - sandbox escape
+        - session hijacking
+        - signature forgery
+        - silent downgrade
+        - sql injection
+        - time alteration
+        - url request injection
+        - xml external entity injection
+    DraftCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        type: {$ref: '#/components/schemas/AdvisoryType'}
+    DraftPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        type: {$ref: '#/components/schemas/AdvisoryType'}
+        workaround: {$ref: '#/components/schemas/Text'}
+        impact: {$ref: '#/components/schemas/Text'}
+    Draft:
+      type: object
+      required: [name, type, package, group, workaround, impact, content, updated, publication]
+      properties:
+        name: {$ref: '#/components/schemas/ASAName'}
+        type: {type: string}
+        package: {type: string}
+        group: {$ref: '#/components/schemas/GroupName'}
+        workaround: {type: string}
+        impact: {type: string}
+        content: {type: string}
+        updated: {type: string, format: date-time}
+        publication:
+          type: string
+          enum: [scheduled]
+      description: Private generated preview; content is derived from current CVE/AVG data, not directly writable.
+    DraftBatch:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Draft'}
+    Change:
+      type: object
+      required: [resource, name, deleted]
+      properties:
+        resource:
+          type: string
+          enum: [cves, groups, advisories]
+        name: {type: string}
+        deleted: {type: boolean}
+    Changes:
+      type: object
+      required: [items, next_cursor, has_more]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Change'}
+        next_cursor: {type: string, pattern: '^[0-9]+$'}
+        has_more: {type: boolean}
+    CVEPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/CVE'}
+        next_cursor: {type: string, nullable: true}
+    PackagePage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Package'}
+        next_cursor: {type: string, nullable: true}
+    GroupPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Group'}
+        next_cursor: {type: string, nullable: true}
+    AdvisoryPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Advisory'}
+        next_cursor: {type: string, nullable: true}
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+    NumericAfter:
+      name: after
+      in: query
+      schema: {type: string, pattern: '^[0-9]{1,18}$'}
+      description: Opaque decimal cursor returned by the previous page; use the same filters.
+    CVEAfter:
+      name: after
+      in: query
+      schema: {$ref: '#/components/schemas/CVEName'}
+      description: Exclusive lexical CVE identifier cursor.
+    ASAAfter:
+      name: after
+      in: query
+      schema: {$ref: '#/components/schemas/ASAName'}
+      description: Exclusive lexical ASA identifier cursor.
+    CVEName:
+      name: name
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/CVEName'}
+    GroupName:
+      name: name
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/GroupName'}
+    ASAName:
+      name: name
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/ASAName'}
+    PackageFilter:
+      name: package
+      in: query
+      schema: {type: string}
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      schema: {type: string}
+      description: ETag from an earlier response; a matching representation returns 304.
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema: {type: string}
+      description: 'Exact quoted strong ETag from a fresh GET. Missing: 428; stale or wildcard: 412.'
+  headers:
+    ETag:
+      description: Strong SHA-256 validator of the complete JSON representation.
+      schema: {type: string}
+    Location:
+      description: Relative detail URL of the new record.
+      schema: {type: string}

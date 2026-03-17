@@ -3,6 +3,7 @@
 All routes are under `/api/v1`. Collections return `items` and `next_cursor`.
 Pass the cursor as `after` with unchanged filters; null ends enumeration.
 `limit` defaults to 50 (range 1–100). Unknown/repeated parameters return `400`.
+See the [OpenAPI schema](openapi-v1.yaml) for fields and filters.
 
 ## Packages
 
