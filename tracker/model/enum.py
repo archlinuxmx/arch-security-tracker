@@ -12,6 +12,8 @@ from .package import sort_packages
 
 
 class EnumType(SchemaType, TypeDecorator):
+    cache_ok = True
+
     def __init__(self, enum, name):
         self.enum = enum
         self.name = name
@@ -22,7 +24,7 @@ class EnumType(SchemaType, TypeDecorator):
     def _set_table(self, table, column):
         self.impl._set_table(table, column)
 
-    def copy(self):
+    def copy(self, **kwargs):
         return EnumType(self.enum, self.name)
 
     def process_bind_param(self, enum_instance, dialect):
