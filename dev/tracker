@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+image=localhost/arch-security-tracker-dev:latest
+if ! podman image exists "$image"; then
+    printf '%s\n' "Missing local image: $image" \
+        "Build it first: podman build -f dev/Containerfile -t $image ." >&2
+    exit 1
+fi
+if [ "$#" = 0 ]; then
+    set -- run --host 0.0.0.0 --port 5000
+fi
+case "$1" in
+    python) set -- "$image" "$@" ;;
+    run) set -- --publish 127.0.0.1:5000:5000 "$image" ./trackerctl "$@" ;;
+    *) set -- "$image" ./trackerctl "$@" ;;
+esac
+if [ -t 0 ] && [ -t 1 ]; then
+    set -- --tty "$@"
+fi
+exec podman run --pull=never --rm --interactive --userns keep-id \
+    --env TRACKER_CONFIG_LOCAL \
+    --volume "$PWD:/src:Z" \
+    "$@"

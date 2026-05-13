@@ -56,7 +56,7 @@ SQLALCHEMY_ECHO = config_sqlalchemy.getboolean('echo')
 SQLALCHEMY_TRACK_MODIFICATIONS = config_sqlalchemy.getboolean('track_modifications')
 
 config_flask = config['flask']
-CSRF_ENABLED = config_flask.getboolean('csrf')
+WTF_CSRF_ENABLED = config_flask.getboolean('csrf')
 SECRET_KEY = config_flask['secret_key']
 FLASK_HOST = config_flask['host']
 FLASK_PORT = config_flask.getint('port')

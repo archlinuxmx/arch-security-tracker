@@ -5,6 +5,7 @@ from flask.cli import with_appcontext
 from flask_migrate import stamp
 from flask_migrate.cli import db as db_cli
 from sqlalchemy import inspect
+from sqlalchemy import text
 
 from tracker import db
 
@@ -20,7 +21,8 @@ def vacuum():
     """Perform vacuum on the database."""
 
     echo('Performing database vacuum...', nl=False)
-    db.session.execute('VACUUM')
+    with db.engine.connect().execution_options(isolation_level='AUTOCOMMIT') as connection:
+        connection.exec_driver_sql('VACUUM')
     echo('done')
 
 
@@ -73,7 +75,7 @@ def check(integrity, foreign_key):
 
     if integrity:
         echo('Checking database integrity...', nl=False)
-        integrity_result = db.session.execute('PRAGMA integrity_check')
+        integrity_result = db.session.execute(text('PRAGMA integrity_check'))
         integrity_errors = [result for result in integrity_result if result[0] != 'ok']
         if not integrity_errors:
             echo('ok')
@@ -84,7 +86,7 @@ def check(integrity, foreign_key):
 
     if foreign_key:
         echo('Checking database foreign keys...', nl=False)
-        foreign_key_errors = db.session.execute('PRAGMA foreign_key_check').fetchall()
+        foreign_key_errors = db.session.execute(text('PRAGMA foreign_key_check')).fetchall()
         if not foreign_key_errors:
             echo('ok')
         else:
