@@ -18,7 +18,7 @@ vulnerability details and generating security advisories.
 
 ### Application
 
-* python >= 3.4
+* python >= 3.14
 * python-sqlalchemy
 * python-sqlalchemy-continuum
 * python-flask
@@ -43,40 +43,37 @@ vulnerability details and generating security advisories.
 * python-pytest
 * python-pytest-cov
 
-### Virtualenv
+### Arch Linux
 
-Python dependencies can be installed in a virtual environment (`venv`), by running:
+Install dependencies with a full Arch update:
 
 ```
-python -m venv .virtualenv
-. .virtualenv/bin/activate
-pip install -r requirements.txt
+sudo pacman -Syu --needed $(cat dev/arch-packages)
 ```
 
-For running tests:
-```
-pip install -r test-requirements.txt
-```
+Arch supplies compiled `pyalpm`; no system pip installation is needed.
 
 ## Setup
+
+For local Arch or Podman setup, see the [development guide](docs/local-development.md).
 
 ```
 make
 ```
 
-run debug mode:
+Run the development server:
 
 ```
 make run
 ```
 
-adding a new user:
+Add a user:
 
 ```
 make user
 ```
 
-run tests:
+Run tests:
 
 ```
 make test
@@ -93,7 +90,9 @@ and all its available options.
 
 ## HTTP API
 
-See the [API guide](docs/api-v1.md) and [OpenAPI](docs/openapi-v1.yaml).
+See the [API guide](docs/api-v1.md) for public reads, scoped writes and drafts,
+and [OpenAPI](docs/openapi-v1.yaml) for the contract.
+Existing installations must run `./trackerctl db upgrade` before starting the tracker.
 
 ## Configuration
 
