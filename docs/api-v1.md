@@ -5,6 +5,7 @@ See the [OpenAPI schema](openapi-v1.yaml) for endpoints, fields and validation;
 
 ## Setup
 
+For a fresh installation, follow the [local setup guide](local-development.md).
 Existing installations must run `./trackerctl db upgrade` before starting the tracker.
 Remote clients must use HTTPS; local examples use HTTP on loopback.
 
