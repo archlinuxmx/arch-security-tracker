@@ -11,6 +11,8 @@
 <p>Retire <a href="{{ url_for('tracker.show_group', avg=source.name) }}">{{ source.name }}</a> and add its CVEs and references to <a href="{{ url_for('tracker.show_group', avg=destination.name) }}">{{ destination.name }}</a>.</p>
 <table><tr><th>Group</th><th>CVEs</th><th>Packages</th><th>Affected / fixed</th></tr>
 {% for group in [source, destination] %}<tr><td>{{ group.name }}</td><td>{% for entry in group.issues %}{{ entry.cve_id }} {% endfor %}</td><td>{% for package in group.packages %}{{ package.pkgname }} {% endfor %}</td><td>{{ group.affected }} / {{ group.fixed }}</td></tr>{% endfor %}</table>
+{% endif %}
+{% if source and destination or form.is_submitted() %}
 <form method="post">
 	{{ form.hidden_tag() }}
 	{{ render_field(form.source, readonly=True) }} {{ render_field(form.destination, readonly=True) }}

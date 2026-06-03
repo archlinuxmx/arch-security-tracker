@@ -33,6 +33,8 @@ def test_assessment_history_is_private_and_conflict_checked(db, client, app, mon
         patch.setitem(app.config, 'WTF_CSRF_ENABLED', True)
         assert client.post('/review/' + record.id, data={'revision': review_revision(record), 'rationale': 'Missing CSRF'}).status_code == 400
     assert ReviewEvent.query.count() == 1
+    for name in ('AVG-9223372036854775808', 'AVG-' + '9' * 100, 'AVG-²'):
+        assert client.get('/review/' + name).status_code == 404
     User.query.one().active = False
     db.session.commit()
     assert client.get('/review/' + record.id).status_code == 403
@@ -52,9 +54,12 @@ def test_signoff_applies_only_to_assessed_revision(db, client):
     assert client.post('/review/' + record.id + '/signoff', data=data).status_code == 302
     assert client.post('/review/' + record.id + '/signoff', data=data).status_code == 409
     assert b'(current)' in client.get('/review/' + record.id).data
+    assert b': reviewed' in client.get('/review').data
     CVEGroup.query.one().packages.append(CVEGroupPackage(pkgname='foo-libs'))
     db.session.commit()
     assert b'(stale)' in client.get('/review/' + record.id).data
+    index = client.get('/review').data
+    assert b': required (record changed)' in index and b': reviewed' not in index
     assert client.post('/review/' + record.id + '/signoff', data=data).status_code == 409
     group = CVEGroup.query.one()
     response = client.get('/review/' + group.name, environ_overrides={'SCRIPT_NAME': '/tracker'})
@@ -100,6 +105,10 @@ def test_intake_requires_approval_and_preserves_private_evidence(db, client):
     assert ('href="/tracker/{}"'.format(record.id)).encode() in response.data
     assert client.post(path + '/promote', data={'revision': revision}).status_code == 409
     assert b'Private source text' in client.get(path).data
+    for candidate_id in ('9223372036854775808', '9' * 100):
+        path = '/review/intake/' + candidate_id
+        assert client.get(path).status_code == 404
+        assert client.post(path + '/promote', data={'revision': 1}).status_code == 404
     response = client.post('/review/intake', data={'title': 'Optional fields omitted', 'source': 'mail:2'})
     assert response.status_code == 302
     empty = IntakeCandidate.query.order_by(IntakeCandidate.id.desc()).first()
@@ -125,10 +134,15 @@ def test_merge_preserves_history_and_blocks_advisory_groups(db, client):
     response = client.get('/review/merge', query_string=data, environ_overrides={'SCRIPT_NAME': '/tracker'})
     for group in (source, destination):
         assert ('href="/tracker/{}"'.format(group.name)).encode() in response.data
+    response = client.post('/review/merge', data=dict(data, rationale=''))
+    assert response.status_code == 400
+    assert b'This field is required.' in response.data
     assert client.post('/review/merge', data=data).status_code == 302
     assert len(destination.issues) == 2
     assert ReviewEvent.query.filter_by(target=source_name, action='merged').one()
     assert client.get('/' + source_name).status_code == 301
+    assert client.get('/AVG-{:02d}'.format(source.id)).status_code == 301
+    assert client.get('/AVG-9223372036854775808').status_code == 404
     assert client.get('/review/retired/' + source_name).status_code == 200
     response = client.get('/review/retired/' + source_name, environ_overrides={'SCRIPT_NAME': '/tracker'})
     assert ('href="/tracker/{}"'.format(destination.name)).encode() in response.data
@@ -152,12 +166,20 @@ def test_merge_preserves_history_and_blocks_advisory_groups(db, client):
 @create_issue(description='Original description')
 def test_revert_creates_new_version_and_keeps_history(db, client):
     record = CVE.query.first()
-    transaction_id = record.versions.first().transaction_id
+    record.cvss_version = '3.1'
+    record.cvss_score = 0
+    record.cvss_vector = 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N'
+    record.cvss_source = 'https://example.org/original-cvss'
+    db.session.commit()
+    transaction_id = record.versions.order_by(None).order_by(version_class(CVE).transaction_id.desc()).first().transaction_id
     record.description = 'Incorrect edit'
     db.session.commit()
     before = record.versions.count()
     data = {'revision': review_revision(record), 'transaction_id': transaction_id, 'rationale': 'Correct mistaken edit'}
-    assert client.get('/review/' + record.id + '/revert').status_code == 200
+    response = client.get('/review/' + record.id + '/revert')
+    assert response.status_code == 200
+    assert b'CVSS version: 3.1' in response.data and b'score: 0.0' in response.data
+    assert record.cvss_vector.encode() in response.data and record.cvss_source.encode() in response.data
     assert client.post('/review/' + record.id + '/revert', data=data).status_code == 302
     assert record.description == 'Original description'
     assert record.versions.count() == before + 1
@@ -177,6 +199,7 @@ def test_group_revert_rejects_changed_relationships(db, client):
     db.session.commit()
     path = '/review/' + record.name + '/revert'
     response = client.get(path)
+    assert b'Bug ticket: 1234' in response.data and b'Advisory qualified: No' in response.data
     assert client.post(path, data={'revision': review_revision(record), 'transaction_id': transaction_id,
                                    'rationale': 'Restore assessment'}).status_code == 409
     assert record.notes == 'Incorrect assessment'

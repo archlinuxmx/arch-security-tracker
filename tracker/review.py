@@ -1,6 +1,7 @@
 import hashlib
 import json
 from datetime import datetime
+from re import fullmatch
 
 from flask import abort
 from flask_login import current_user
@@ -27,7 +28,7 @@ GROUP_FIELDS = ('affected', 'fixed', 'status', 'bug_ticket', 'reference', 'notes
 def review_target(name):
     if name.startswith('CVE-'):
         return CVE.query.get_or_404(name)
-    if name.startswith('AVG-') and name[4:].isdigit():
+    if fullmatch(r'AVG-[0-9]{1,18}', name):
         return CVEGroup.query.get_or_404(int(name[4:]))
     abort(404)
 
@@ -133,10 +134,11 @@ def merge_groups(source, destination, rationale):
 
 def merged_destination(name):
     seen = set()
-    while name not in seen:
-        seen.add(name)
-        if not name.startswith('AVG-') or not name[4:].isdigit():
+    while fullmatch(r'AVG-[0-9]{1,18}', name):
+        name = 'AVG-{}'.format(int(name[4:]))
+        if name in seen:
             return None
+        seen.add(name)
         if CVEGroup.query.get(int(name[4:])):
             return name
         event = ReviewEvent.query.filter_by(target=name, action='merged').order_by(ReviewEvent.id.desc()).first()

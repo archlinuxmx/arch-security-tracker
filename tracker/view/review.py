@@ -12,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy_continuum import version_class
 from werkzeug.exceptions import HTTPException
+from werkzeug.exceptions import NotFound
 
 from tracker import db
 from tracker import tracker
@@ -74,7 +75,15 @@ def review_index():
     latest = db.session.query(func.max(ReviewEvent.id)).filter(
         ReviewEvent.action.in_(('required', 'reviewed'))).group_by(ReviewEvent.target)
     events = ReviewEvent.query.filter(ReviewEvent.id.in_(latest)).order_by(ReviewEvent.id.desc()).limit(100).all()
-    return render_template('review/index.html', title='Review', form=form, events=events,
+    assessments = []
+    for event in events:
+        try:
+            record = review_target(event.target)
+        except NotFound:
+            continue
+        stale = event.action == 'reviewed' and event.revision != content_revision(record)
+        assessments.append((event, stale))
+    return render_template('review/index.html', title='Review', form=form, assessments=assessments,
                            retired=ReviewEvent.query.filter_by(action='merged').order_by(ReviewEvent.id.desc()).limit(100).all()), 400 if request.method == 'POST' else 200
 
 
@@ -157,10 +166,10 @@ def lock_candidate(candidate, revision):
         abort(409, 'The candidate changed or was already promoted. Reload before submitting.')
 
 
-@tracker.route('/review/intake/<int:candidate_id>', methods=['GET', 'POST'])
+@tracker.route('/review/intake/<regex("[0-9]{1,18}"):candidate_id>', methods=['GET', 'POST'])
 @private_review
 def review_intake_detail(candidate_id):
-    candidate = IntakeCandidate.query.get_or_404(candidate_id)
+    candidate = IntakeCandidate.query.get_or_404(int(candidate_id))
     form = IntakeDecisionForm()
     if form.validate_on_submit():
         lock_candidate(candidate, form.revision.data)
@@ -182,10 +191,10 @@ def review_intake_detail(candidate_id):
                            events=events), 400 if request.method == 'POST' else 200
 
 
-@tracker.route('/review/intake/<int:candidate_id>/promote', methods=['POST'])
+@tracker.route('/review/intake/<regex("[0-9]{1,18}"):candidate_id>/promote', methods=['POST'])
 @private_review
 def review_intake_promote(candidate_id):
-    candidate = IntakeCandidate.query.get_or_404(candidate_id)
+    candidate = IntakeCandidate.query.get_or_404(int(candidate_id))
     form = IntakePromoteForm()
     if not form.validate_on_submit():
         abort(400, 'A revision and valid CSRF token are required.')

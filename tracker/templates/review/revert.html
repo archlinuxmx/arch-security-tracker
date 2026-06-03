@@ -10,7 +10,11 @@
 {% for version in versions %}
 <h3>Transaction {{ version.transaction_id }}</h3>
 {% if name.startswith('CVE-') %}<p>{{ version.issue_type }} — {{ version.severity }} — {{ version.remote }}</p><pre>{{ version.description or '' }}</pre>
-{% else %}<p>{{ version.status }} — affected {{ version.affected }} — fixed {{ version.fixed }}</p>{% endif %}
+<p>CVSS version: {{ version.cvss_version or '' }} — score: {{ version.cvss_score if version.cvss_score is not none else '' }}</p>
+<pre>{{ version.cvss_vector or '' }}</pre>
+<p>CVSS source: {{ version.cvss_source or '' }}</p>
+{% else %}<p>{{ version.status }} — affected {{ version.affected }} — fixed {{ version.fixed }}</p>
+<p>Bug ticket: {{ version.bug_ticket or '' }} — Advisory qualified: {{ 'Yes' if version.advisory_qualified else 'No' }}</p>{% endif %}
 <pre>{{ version.reference or '' }}</pre><pre>{{ version.notes or '' }}</pre>
 {% endfor %}
 {% endblock %}

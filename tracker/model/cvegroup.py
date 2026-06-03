@@ -9,7 +9,7 @@ from .enum import Status
 pkgname_regex = r'^([a-z\d@\.\_\+-]+)$'
 # Require printable ASCII; pkgver excludes colons, slashes and hyphens.
 pkgver_regex = r'^(?:[0-9]+:)?(?=[!-~]+\Z)[^:/-]+-[0-9]+(?:\.[0-9]+)?\Z'
-vulnerability_group_regex = r'^AVG-\d+$'
+vulnerability_group_regex = r'^AVG-[0-9]{1,18}$'
 bug_ticket_regex = (r'^https://gitlab\.archlinux\.org/archlinux/packaging/packages/'
                     r'(?!\.{1,2}/)[a-z0-9_.-]+/-/issues/[1-9][0-9]*\Z')
 
