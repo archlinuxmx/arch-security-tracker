@@ -1,5 +1,7 @@
+import tarfile
 from operator import attrgetter
 from os import chdir
+from pathlib import Path
 from time import time
 
 from pyalpm import vercmp
@@ -55,16 +57,30 @@ def get_pkg(pkgname, arch=None, testing=True, filter_arch=False, force_fresh_han
     return results
 
 
-def search(pkgname, arch=None, testing=True, filter_arch=False, force_fresh_handle=False, sort_results=True, filter_duplicate_packages=True):
+def search(pkgname, arch=None, testing=True, filter_arch=False, force_fresh_handle=False,
+           sort_results=True, filter_duplicate_packages=True, required_repositories=None):
     search_archs = [arch] if arch else archs
     results = []
+    repositories = set()
     for arch in search_archs:
-        for syncdb in get_handle(arch, force_fresh_handle=force_fresh_handle).get_syncdbs():
+        handle = get_handle(arch, force_fresh_handle=force_fresh_handle)
+        for syncdb in handle.get_syncdbs():
             if not testing and 'testing' in syncdb.name:
                 continue
+            if required_repositories is not None:
+                try:
+                    with tarfile.open(Path(handle.dbpath) / 'sync' / (syncdb.name + '.db')) as archive:
+                        archive.getmembers()
+                except (OSError, tarfile.TarError, EOFError) as error:
+                    raise ValueError('Cannot read repository {}; keeping the existing cache.'
+                                     .format(syncdb.name)) from error
+            repositories.add(syncdb.name)
             result = syncdb.search(pkgname)
             if result:
                 results.extend(result)
+    if required_repositories is not None and required_repositories - repositories:
+        raise ValueError('Repositories missing from refresh: {}; keeping the existing cache.'
+                         .format(', '.join(sorted(required_repositories - repositories))))
     if sort_results:
         results = sort_packages(results)
     if filter_duplicate_packages:

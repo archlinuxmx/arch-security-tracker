@@ -56,13 +56,12 @@ def recalc_group_status():
 
 def recalc_group_severity():
     updated = []
-    entries = (db.session.query(CVEGroup, CVEGroupEntry, CVE)
-               .join(CVEGroupEntry).join(CVE)
-               .group_by(CVEGroupEntry.group_id).group_by(CVE.id)).all()
-    issues = defaultdict(set)
-    for group, entry, issue in entries:
-        issues[group].add(issue)
-    for group, issues in issues.items():
+    entries = (db.session.query(CVEGroup, CVE)
+               .join(CVEGroup.issues).join(CVEGroupEntry.cve)).all()
+    issues_by_group = defaultdict(set)
+    for group, issue in entries:
+        issues_by_group[group].add(issue)
+    for group, issues in issues_by_group.items():
         new_severity = highest_severity([issue.severity for issue in issues])
         if group.severity is not new_severity:
             updated.append(dict(group=group, old_severity=group.severity))
@@ -73,7 +72,9 @@ def recalc_group_severity():
 
 def update_package_cache():
     print('  -> Querying alpm database...', end='', flush=True)
-    packages = search('', filter_duplicate_packages=False, sort_results=False, force_fresh_handle=True)
+    previous_repos = {repo for repo, in db.session.query(Package.database).distinct()}
+    packages = search('', filter_duplicate_packages=False, sort_results=False, force_fresh_handle=True,
+                      required_repositories=previous_repos)
     if not packages:
         raise ValueError('Package refresh returned no packages; keeping the existing cache.')
     print('done')
@@ -100,11 +101,6 @@ def update_package_cache():
     latest = max(packages, key=lambda pkg: pkg.builddate)
     print('  -> Latest package: {} {} {}'.format(
         latest.name, latest.version, datetime.fromtimestamp(latest.builddate).strftime('%c')))
-    previous_repos = {repo for repo, in db.session.query(Package.database).distinct()}
-    refreshed_repos = {package['database'] for package in new_packages}
-    if previous_repos - refreshed_repos:
-        raise ValueError('Repositories missing from refresh: {}; keeping the existing cache.'
-                         .format(', '.join(sorted(previous_repos - refreshed_repos))))
     try:
         Package.query.delete()
         db.session.bulk_insert_mappings(Package, new_packages)
