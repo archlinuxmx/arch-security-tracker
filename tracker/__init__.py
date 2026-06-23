@@ -155,6 +155,7 @@ def create_app(test_config=None):
         app.register_error_handler(error_handler['code_or_exception'], error_handler['func'])
 
     from tracker import api_catalog
+    from tracker import api_intake
     from tracker import api_workflow
     from tracker.api import api
     from tracker.view.blueprint import blueprint
