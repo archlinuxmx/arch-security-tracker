@@ -60,7 +60,7 @@ Description
 ===========
 
 {% for issue in issues %}
-{%- if issues|length > 1 %}- {{issue.id}} ({{ issue.issue_type }})
+{%- if issues|length > 1 %}- {{issue.id}} ({{ issue.issue_type or 'unknown' }})
 
 {% endif %}
 {%- set splitted = '' if not issue.description else issue.description.split('\n') %}

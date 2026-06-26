@@ -1,5 +1,4 @@
 from collections import OrderedDict
-from re import match
 
 from feedgen.feed import FeedGenerator
 from flask import Response
@@ -16,6 +15,7 @@ from tracker import tracker
 from tracker.advisory import advisory_fetch_reference_url_from_mailman
 from tracker.advisory import advisory_get_date_label
 from tracker.advisory import advisory_get_label
+from tracker.advisory import advisory_get_last_number
 from tracker.advisory import viewable_advisories
 from tracker.form.advisory import AdvisoryForm
 from tracker.form.advisory import AdvisoryPublishForm
@@ -76,7 +76,8 @@ def advisory_atom():
         advisory = entry['advisory']
         content = render_template('feed.html', content=advisory.content)
         impact = render_template('feed.html', content=advisory.impact)
-        published = updated = advisory.created.replace(tzinfo=UTC)
+        published = advisory.created.replace(tzinfo=UTC)
+        updated = advisory.changed.replace(tzinfo=UTC)
 
         entry = feed.add_entry()
         entry.id(TRACKER_ISSUE_URL.format(advisory.id))
@@ -147,6 +148,8 @@ def schedule_advisory(avg):
         flash('Form validation failed', 'error')
         return redirect('/{}'.format(avg))
 
+    # Take the write lock before looking for existing advisories and numbers.
+    db.lock(CVEGroup, CVEGroup.id == int(avg_id))
     entries = (db.session.query(CVEGroup, CVE, CVEGroupPackage, Advisory)
                .filter(CVEGroup.id == avg_id)
                .join(CVEGroupEntry, CVEGroup.issues)
@@ -173,14 +176,9 @@ def schedule_advisory(avg):
         return redirect('/{}'.format(avg))
 
     last_advisory_date = advisory_get_date_label()
-    last_advisory_num = 0
-    last_advisory = (db.session.query(Advisory).order_by(Advisory.created.desc()).limit(1)).first()
-    if last_advisory:
-        m = match(advisory_regex, last_advisory.id)
-        if last_advisory_date == m.group(2):
-            last_advisory_num = int(m.group(3))
+    last_advisory_num = advisory_get_last_number(last_advisory_date)
 
-    for pkg in pkgs:
+    for pkg in sorted(pkgs, key=lambda package: package.pkgname):
         last_advisory_num += 1
         asa = advisory_get_label(last_advisory_date, last_advisory_num)
         db.create(Advisory,
@@ -194,7 +192,7 @@ def schedule_advisory(avg):
     return redirect('/{}'.format(asa))
 
 
-@tracker.route('/advisory/<regex("{}"):avg>/publish'.format(advisory_regex[1:-1]), methods=['PUT', 'POST', 'GET'])
+@tracker.route('/advisory/<regex("{}"):asa>/publish'.format(advisory_regex[1:-1]), methods=['PUT', 'POST', 'GET'])
 @tracker.route('/<regex("{}"):asa>/publish'.format(advisory_regex[1:-1]), methods=['PUT', 'POST', 'GET'])
 @security_team_required
 def publish_advisory(asa):

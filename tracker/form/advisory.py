@@ -41,6 +41,7 @@ class AdvisoryEditForm(BaseForm):
     force_submit = BooleanField(u'Force update', default=False, validators=[Optional()])
     edit = SubmitField(u'edit')
 
-    def __init__(self, advisory_id):
+    def __init__(self, advisory_id, reference=None):
         super().__init__()
         self.advisory_id = advisory_id
+        self.original_reference = reference

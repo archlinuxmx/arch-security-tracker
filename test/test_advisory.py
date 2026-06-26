@@ -1,6 +1,9 @@
 
 from collections import namedtuple
+from datetime import datetime
+from datetime import timezone
 from subprocess import run
+from xml.etree import ElementTree
 
 from flask import url_for
 from markupsafe import escape
@@ -8,6 +11,7 @@ from pytest import mark
 from werkzeug.exceptions import Forbidden
 from werkzeug.exceptions import NotFound
 
+from config import TRACKER_MAILMAN_URL
 from tracker.advisory import advisory_extend_html
 from tracker.advisory import advisory_format_issue_listing
 from tracker.advisory import advisory_get_impact_from_text
@@ -18,6 +22,8 @@ from tracker.model.advisory import Advisory
 from tracker.model.cve import CVE
 from tracker.model.cve import issue_types
 from tracker.model.cvegroup import CVEGroup
+from tracker.model.cvegroupentry import CVEGroupEntry
+from tracker.model.cvegrouppackage import CVEGroupPackage
 from tracker.model.enum import Publication
 from tracker.model.enum import UserRole
 from tracker.view.advisory import ERROR_ADVISORY_ALREADY_EXISTS
@@ -84,6 +90,22 @@ def test_schedule_advisory(db, client):
     assert 200 == resp.status_code
     assert_advisory_data(DEFAULT_ADVISORY_ID)
     assert 1 == advisory_count()
+
+    original = CVEGroup.query.get(DEFAULT_GROUP_ID)
+    groups = [CVEGroup(affected=original.affected, fixed=original.fixed, status=original.status,
+                       issues=[CVEGroupEntry(cve=CVE.query.get(DEFAULT_ISSUE_ID))],
+                       packages=[CVEGroupPackage(pkgname=name)]) for name in ('bar', 'baz')]
+    db.session.add_all(groups)
+    db.session.flush()
+    db.session.add(Advisory(id=advisory_get_label(number=2), group_package=groups[0].packages[0],
+                           created=datetime(2000, 1, 1)))
+    db.session.commit()
+    group_id = groups[1].id
+    resp = client.post(url_for('tracker.schedule_advisory', avg=groups[1].name),
+                       data={'advisory_type': issue_types[1]})
+    assert resp.status_code == 302
+    assert_advisory_data(advisory_get_label(number=3), group_id=group_id)
+    assert 3 == advisory_count()
 
 
 @create_package(name='foo', version='1.2.3-4')
@@ -399,6 +421,17 @@ def test_advisory_atom(db, client):
     data = resp.data.decode()
     assert DEFAULT_ADVISORY_ID in data
 
+    advisory = get_advisory()
+    advisory.created = datetime(2024, 1, 2)
+    advisory.impact = 'Corrected public impact'
+    db.session.commit()
+    response = client.get(url_for('tracker.advisory_atom'))
+    namespace = {'atom': 'http://www.w3.org/2005/Atom'}
+    entry = ElementTree.fromstring(response.data).find('atom:entry', namespace)
+    assert entry.find('atom:published', namespace).text == advisory.created.replace(tzinfo=timezone.utc).isoformat()
+    assert entry.find('atom:updated', namespace).text == advisory.changed.replace(tzinfo=timezone.utc).isoformat()
+    assert 'Corrected public impact' in entry.find('atom:summary', namespace).text
+
 
 def test_advisory_json_no_data(db, client):
     resp = client.get(url_for('tracker.advisory_json', postfix='/json'), follow_redirects=True)
@@ -500,7 +533,7 @@ def test_advisory_format_issue_listing_single_issue():
 @logged_in
 def test_advisory_publish_advisory_not_found(db, client, patch_get):
     resp = client.post(url_for('tracker.publish_advisory', asa=DEFAULT_ADVISORY_ID), follow_redirects=True,
-                       data=dict(reference='https://archlinux.org', confirm=True))
+                       data=dict(reference=TRACKER_MAILMAN_URL, confirm=True))
     assert 200 == resp.status_code
     assert 'Failed to fetch advisory' in resp.data.decode()
 
@@ -512,7 +545,7 @@ def test_advisory_publish_advisory_not_found(db, client, patch_get):
 @logged_in
 def test_advisory_publish_advisory_text_wrong(db, client, patch_get):
     resp = client.post(url_for('tracker.publish_advisory', asa=DEFAULT_ADVISORY_ID), follow_redirects=True,
-                       data=dict(reference='https://archlinux.org', confirm=True))
+                       data=dict(reference=TRACKER_MAILMAN_URL, confirm=True))
     assert 200 == resp.status_code
     assert 'Failed to fetch advisory' in resp.data.decode()
 
@@ -522,8 +555,9 @@ def test_advisory_publish_advisory_text_wrong(db, client, patch_get):
 @create_advisory(id=DEFAULT_ADVISORY_ID, group_package_id=DEFAULT_GROUP_ID, advisory_type=issue_types[1])
 @logged_in
 def test_advisory_publish_advisory(db, client, patch_get):
+    assert client.get('/advisory/{}/publish'.format(DEFAULT_ADVISORY_ID)).status_code == 200
     resp = client.post(url_for('tracker.publish_advisory', asa=DEFAULT_ADVISORY_ID), follow_redirects=True,
-                       data=dict(reference=f'https://security.archlinux.org/{DEFAULT_ADVISORY_ID}', confirm=True))
+                       data=dict(reference=f'{TRACKER_MAILMAN_URL}message/{DEFAULT_ADVISORY_ID}', confirm=True))
     assert 200 == resp.status_code
     assert 'Published {}'.format(DEFAULT_ADVISORY_ID) in resp.data.decode()
 
@@ -549,15 +583,26 @@ def test_show_advisory_not_found(db, client, patch_get):
 @create_package(name='foo', version='1.2.3-4')
 @create_group(id=DEFAULT_GROUP_ID, packages=['foo'], affected='1.2.3-3', fixed='1.2.3-4')
 @create_advisory(id=DEFAULT_ADVISORY_ID, group_package_id=DEFAULT_GROUP_ID, advisory_type=issue_types[1],
-                 content=create_advisory_content(description='<description>', impact='<impact>', workaround='<workaround>'))
-@logged_in
-def test_advisory_published_html_content_escaped(db, client, patch_get):
+                 publication=Publication.published,
+                 content=create_advisory_content(description='<description>', impact='<impact>', workaround='<workaround>',
+                                                  references='https://example.org/<script>alert(1)</script>'))
+def test_advisory_published_html_content_escaped(db, client):
     resp = client.get(url_for('tracker.show_advisory', advisory_id=DEFAULT_ADVISORY_ID), follow_redirects=True)
     assert 200 == resp.status_code
     data = resp.data.decode()
     assert '<description>' not in data
     assert '<impact>' not in data
     assert '<workaround>' not in data
+    assert '<script>' not in data
+    assert '&lt;script&gt;' in data
+    assert '<a href="/package/foo"' in data
+
+    Advisory.query.one().content = 'Older format without section headings: <header>'
+    db.session.commit()
+    response = client.get('/' + DEFAULT_ADVISORY_ID)
+    assert response.status_code == 200
+    assert b'&lt;header&gt;' in response.data
+    assert b'<header>' not in response.data
 
 
 @create_package(name='foo', version='1.2.3-4')
@@ -604,6 +649,9 @@ def test_advisory_raw_content_unescaped(db, client):
 def test_delete_advisory_not_found(db, client):
     resp = client.get(url_for('tracker.delete_advisory', advisory_id=9999), follow_redirects=True)
     assert NotFound.code == resp.status_code
+    for route in ('/ASA-209901-999/delete', '/advisory/ASA-209901-999/delete'):
+        assert NotFound.code == client.get(route).status_code
+        assert NotFound.code == client.post(route, data=dict(confirm=True)).status_code
 
 
 @create_package(name='foo', version='1.2.3-4')
@@ -712,7 +760,7 @@ def test_advisory_generated_content_not_over_escaped(db, client):
 @logged_in
 def test_advisory_published_content_not_over_escaped(db, client, patch_get):
     resp = client.post(url_for('tracker.publish_advisory', asa=DEFAULT_ADVISORY_ID), follow_redirects=True,
-                       data=dict(reference=f'https://security.archlinux.org/{DEFAULT_ADVISORY_ID}', confirm=True))
+                       data=dict(reference=f'{TRACKER_MAILMAN_URL}message/{DEFAULT_ADVISORY_ID}', confirm=True))
     assert 200 == resp.status_code
     assert 'Published {}'.format(DEFAULT_ADVISORY_ID) in resp.data.decode()
 
