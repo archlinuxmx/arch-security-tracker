@@ -19,7 +19,7 @@ ERROR_INVALID_URL = u'Invalid URL {}.'
 
 class ValidAdvisoryReference(object):
     def __call__(self, form, field):
-        if not field.data:
+        if not field.data or field.data == getattr(form, 'original_reference', None):
             return
 
         mailman_content = advisory_fetch_from_mailman(field.data)
@@ -35,6 +35,8 @@ class ValidAdvisoryReference(object):
             raise ValidationError('Advisory mismatched: {}'.format(found))
 
         form.advisory_content = generate_advisory(advisory_id=form.advisory_id, with_subject=False, raw=True)
+        if not form.advisory_content:
+            raise ValidationError('A fixed version and CVEs are required to generate this advisory.')
 
 
 class ValidPackageName(object):

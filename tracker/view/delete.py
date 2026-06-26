@@ -153,13 +153,14 @@ def delete_issue(issue):
 @tracker.route('/<regex("{}"):advisory_id>/delete'.format(advisory_regex[1:-1]), methods=['GET', 'POST'])
 @security_team_required
 def delete_advisory(advisory_id):
-    advisory, pkg, group = (db.session.query(Advisory, CVEGroupPackage, CVEGroup)
-                            .filter(Advisory.id == advisory_id)
-                            .join(CVEGroupPackage, Advisory.group_package)
-                            .join(CVEGroup, CVEGroupPackage.group)).first()
+    entry = (db.session.query(Advisory, CVEGroupPackage, CVEGroup)
+             .filter(Advisory.id == advisory_id)
+             .join(CVEGroupPackage, Advisory.group_package)
+             .join(CVEGroup, CVEGroupPackage.group)).first()
 
-    if not advisory:
+    if entry is None:
         return not_found()
+    advisory, pkg, group = entry
 
     if Publication.scheduled != advisory.publication:
         return forbidden()

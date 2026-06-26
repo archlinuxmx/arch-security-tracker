@@ -305,6 +305,22 @@ def get_draft(name, locked=False):
     return advisory
 
 
+@api.route('/groups/<name>/advisory-drafts', methods=['GET'])
+@token_required(scope='advisories:write')
+def list_advisory_drafts(name):
+    from re import fullmatch
+
+    if not fullmatch(r'AVG-[0-9]{1,18}', name):
+        raise NotFound('Group not found.')
+    group = CVEGroup.query.filter_by(id=int(name[4:])).first()
+    if group is None:
+        raise NotFound('Group not found.')
+    drafts = (Advisory.query.join(CVEGroupPackage)
+              .filter(CVEGroupPackage.group_id == group.id, Advisory.publication == Publication.scheduled)
+              .order_by(CVEGroupPackage.pkgname).all())
+    return record_response({'items': [serialize_draft(advisory) for advisory in drafts]})
+
+
 @api.route('/groups/<name>/advisory-drafts', methods=['POST'])
 @token_required(scope='advisories:write')
 def create_advisory_drafts(name):
@@ -342,11 +358,13 @@ def create_advisory_drafts(name):
         db.session.add(advisory)
         drafts.append(advisory)
     try:
+        db.session.flush()
+        response = record_response({'items': [serialize_draft(advisory) for advisory in drafts]}, 201)
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
         raise APIError(409, 'concurrent_creation', 'An advisory was created concurrently; fetch the group before retrying.')
-    return record_response({'items': [serialize_draft(advisory) for advisory in drafts]}, 201)
+    return response
 
 
 @api.route('/advisory-drafts/<name>', methods=['GET'])
@@ -372,5 +390,7 @@ def update_advisory_draft(name):
     require_match(serialize_draft(advisory))
     for key, value in data.items():
         setattr(advisory, 'advisory_type' if key == 'type' else key, value)
+    db.session.flush()
+    response = record_response(serialize_draft(advisory))
     db.session.commit()
-    return record_response(serialize_draft(advisory))
+    return response

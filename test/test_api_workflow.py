@@ -196,19 +196,56 @@ def test_group_update_validates_versions_and_keeps_relationships(db, client, wor
 
 @create_package(name='foo', version='2.0-1')
 @create_issue(description='The issue description', severity=Severity.high)
-@create_group(fixed='1.1-1', bug_ticket='https://gitlab.archlinux.org/archlinux/packaging/packages/foo/-/issues/73')
-def test_advisory_drafts_generate_content_without_publishing(db, client, workflow_tokens):
+@create_issue(id='CVE-2026-0001', issue_type='information disclosure')
+@create_group(fixed='1.1-1', issues=[DEFAULT_ISSUE_ID, 'CVE-2026-0001'],
+              bug_ticket='https://gitlab.archlinux.org/archlinux/packaging/packages/foo/-/issues/73')
+def test_advisory_drafts_generate_content_without_publishing(db, client, workflow_tokens, monkeypatch):
     headers = workflow_tokens['advisories:write']
+    collection = '/api/v1/groups/AVG-1/advisory-drafts'
+    assert client.get(collection).status_code == 401
+    assert client.get(collection, headers=workflow_tokens['cves:create']).status_code == 403
+    assert client.get(collection, headers=headers).get_json() == {'items': []}
+    for name in ('AVG-2', 'AVG-' + '9' * 19, 'invalid'):
+        assert client.get('/api/v1/groups/' + name + '/advisory-drafts', headers=headers).status_code == 404
+    CVE.query.filter_by(id=DEFAULT_ISSUE_ID).one().issue_type = None
+    db.session.commit()
+
+    def failed_render(*args, **kwargs):
+        raise RuntimeError('Unable to render draft')
+
+    with monkeypatch.context() as patch:
+        patch.setattr('tracker.advisory.generate_advisory', failed_render)
+        response = client.post('/api/v1/groups/AVG-1/advisory-drafts', json={}, headers=headers)
+        assert response.status_code == 500
+        assert Advisory.query.count() == 0
     response = client.post('/api/v1/groups/AVG-1/advisory-drafts', json={}, headers=headers)
     assert response.status_code == 201
+    listing = client.get(collection, headers=headers)
+    assert listing.status_code == 200
+    assert listing.get_json() == response.get_json()
+    assert 'no-store' in listing.headers['Cache-Control']
     record = response.get_json()['items'][0]
     assert record['publication'] == 'scheduled'
     assert 'The issue description' in record['content']
+    assert '{} (unknown)'.format(DEFAULT_ISSUE_ID) in record['content']
+    assert CVE.query.filter_by(id=DEFAULT_ISSUE_ID).one().issue_type is None
     assert '\nhttps://gitlab.archlinux.org/archlinux/packaging/packages/foo/-/issues/73\n' in record['content']
     path = '/api/v1/advisory-drafts/' + record['name']
     assert client.get(path).status_code == 401
     draft = client.get(path, headers=headers)
     edit_headers = dict(headers, **{'If-Match': draft.headers['ETag']})
+
+    def failed_update_render(*args, **kwargs):
+        if Advisory.query.one().impact == 'Failed update':
+            raise RuntimeError('Unable to render changed draft')
+        return generate_advisory(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr('tracker.advisory.generate_advisory', failed_update_render)
+        response = client.patch(path, json={'impact': 'Failed update'}, headers=edit_headers)
+        assert response.status_code == 500
+        assert Advisory.query.one().impact is None
+    assert client.get(path, headers=headers).headers['ETag'] == draft.headers['ETag']
     response = client.patch(path, json={'impact': 'unpublishedimpactmarker'}, headers=edit_headers)
     assert response.status_code == 200
     assert 'unpublishedimpactmarker' in response.get_json()['content']
@@ -243,6 +280,7 @@ def test_advisory_drafts_generate_content_without_publishing(db, client, workflo
     user.password = hash_password('workflow-password', user.salt)
     db.session.commit()
     assert client.get(path, headers=headers).status_code == 403
+    assert client.get(collection, headers=headers).status_code == 403
     assert client.post('/login', data={'username': user.name, 'password': 'workflow-password'}).status_code == 302
     assert_private()
     response = client.get('/user/workflow/log')
@@ -260,8 +298,19 @@ def test_advisory_drafts_generate_content_without_publishing(db, client, workflo
         assert record['name'].encode() in client.get('/todo.json').data
         assert b'unpublishedimpactmarker' in client.get('/user/workflow/log').data
         assert client.get('/stats.json').get_json()['advisories']['total'] == 1
+    group_path = '/api/v1/groups/AVG-1'
+    response = client.patch(group_path, json={'fixed': None},
+                            headers=match(client, group_path, workflow_tokens['groups:update']))
+    assert response.status_code == 200
+    assert client.get(path, headers=headers).get_json()['content'] == ''
+    for suffix in ('/generate', '/generate/raw', '/raw'):
+        assert client.get('/' + record['name'] + suffix, follow_redirects=True).status_code == 409
+    response = client.patch(group_path, json={'fixed': '1.1-1'},
+                            headers=match(client, group_path, workflow_tokens['groups:update']))
+    assert response.status_code == 200
     user.active = False
     db.session.commit()
+    assert client.get(collection, headers=headers).status_code == 403
     assert_private()
     for suffix in ('/edit', '/delete', '/publish'):
         assert client.get('/' + record['name'] + suffix).status_code == 403
@@ -290,3 +339,6 @@ def test_published_advisory_is_never_a_writable_draft(db, client, workflow_token
     assert response.status_code == 409
     assert Advisory.query.one().impact is None
     assert Advisory.query.one().publication == Publication.published
+    listing = client.get('/api/v1/groups/AVG-1/advisory-drafts', headers=workflow_tokens['advisories:write'])
+    assert listing.status_code == 200
+    assert listing.get_json() == {'items': []}

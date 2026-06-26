@@ -57,7 +57,7 @@ def edit_advisory(advisory_id):
     if not advisory:
         return not_found()
 
-    form = AdvisoryEditForm(advisory.id)
+    form = AdvisoryEditForm(advisory.id, reference=advisory.reference)
     if not form.is_submitted():
         form.workaround.data = advisory.workaround
         form.impact.data = advisory.impact

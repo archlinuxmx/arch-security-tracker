@@ -1,11 +1,12 @@
 from datetime import datetime
 from functools import wraps
-from re import match
+from re import fullmatch
 from urllib.parse import urlparse
 
 import pytest
 from flask import url_for
 from flask_login import current_user
+from requests import Response
 
 from tracker import advisory
 from tracker import create_app
@@ -83,16 +84,22 @@ def patch_get(monkeypatch, request):
         else:
             status_code = request.param
 
-    def mocked_get(uri, *args, **kwargs):
+    def mocked_get(session, uri, *args, **kwargs):
         nonlocal text, status_code
         uri = urlparse(uri)
         path = uri.path
         if uri.path.startswith('/'):
             path = uri.path[1:]
-        if match(advisory_regex, path):
+        path = path.rsplit('/', 1)[-1]
+        if fullmatch(advisory_regex, path):
             text = '<PRE>{}\n-------------- next part --------------</PRE>'.format(create_advisory_content(id=path))
-        return type('MockedReq', (), {'status_code': status_code, 'text': text})()
-    monkeypatch.setattr(advisory, 'get', mocked_get)
+        response = Response()
+        response.status_code = status_code
+        response.encoding = 'utf-8'
+        response._content = text.encode()
+        response._content_consumed = True
+        return response
+    monkeypatch.setattr(advisory.Session, 'get', mocked_get)
 
 
 def assert_logged_in(response, status_code=200):

@@ -50,6 +50,7 @@ from tracker.user import user_can_watch_user_log
 from tracker.util import json_response
 from tracker.util import multiline_to_list
 from tracker.util import page_number
+from tracker.view.error import handle_error
 from tracker.view.error import not_found
 
 
@@ -546,7 +547,7 @@ def show_generated_advisory(advisory_id, raw=False):
         return not_found()
     advisory = generate_advisory(advisory_id, with_subject=True, raw=raw)
     if not advisory:
-        return not_found()
+        return handle_error('A fixed version and CVEs are required to generate this advisory.', 409)
     return advisory
 
 

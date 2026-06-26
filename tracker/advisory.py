@@ -6,11 +6,13 @@ from re import escape
 from re import search
 from re import sub
 from shlex import quote
+from urllib.parse import unquote
 from urllib.parse import urlparse
 
 from flask import render_template
 from markupsafe import escape as html_escape
-from requests import get
+from requests import Session
+from requests.exceptions import RequestException
 
 from config import TRACKER_ADVISORY_URL
 from config import TRACKER_BUGTRACKER_URL
@@ -60,9 +62,11 @@ def generate_advisory(advisory_id, with_subject=True, raw=True):
 
     advisory = entries[0][0]
     group = entries[0][1]
+    if not group.fixed:
+        return None
     package = entries[0][2]
     issues = sorted([issue for (advisory, group, package, issue) in entries])
-    severity_sorted_issues = sorted(issues, key=lambda issue: issue.issue_type)
+    severity_sorted_issues = sorted(issues, key=lambda issue: issue.issue_type or 'unknown')
     severity_sorted_issues = sorted(severity_sorted_issues, key=lambda issue: issue.severity)
     remote = any([issue.remote is Remote.remote for issue in issues])
     issue_listing_formatted = advisory_format_issue_listing([issue.id for issue in issues])
@@ -74,8 +78,9 @@ def generate_advisory(advisory_id, with_subject=True, raw=True):
         upstream_version = upstream_version[upstream_version.index(':') + 1:]
     unique_issue_types = []
     for issue in severity_sorted_issues:
-        if issue.issue_type not in unique_issue_types:
-            unique_issue_types.append(issue.issue_type)
+        issue_type = issue.issue_type or 'unknown'
+        if issue_type not in unique_issue_types:
+            unique_issue_types.append(issue_type)
 
     references = []
     if group.bug_ticket:
@@ -126,45 +131,63 @@ def render_html_advisory(advisory, package, group, raw_asa, generated):
 
 def advisory_fetch_from_mailman(url):
     try:
-        response = get(url)
-        if 200 != response.status_code:
+        archive = urlparse(TRACKER_MAILMAN_URL)
+        target = urlparse(url)
+        if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in url):
+            return None
+        if target.username is not None or target.password is not None:
+            return None
+        if target.scheme not in ('http', 'https') or not target.hostname:
+            return None
+        archive_port = archive.port if archive.port is not None else (443 if archive.scheme == 'https' else 80)
+        target_port = target.port if target.port is not None else (443 if target.scheme == 'https' else 80)
+        if (target.scheme, target.hostname, target_port) != (archive.scheme, archive.hostname, archive_port):
             return None
 
-        return response.text
-    except Exception:
+        path = unquote(target.path)
+        if (not target.path.startswith(archive.path.rstrip('/') + '/') or '%' in path or '\\' in path or
+                any(part in ('.', '..') for part in path.split('/'))):
+            return None
+
+        # Only the configured archive is trusted; never follow its redirects.
+        with Session() as session:
+            with session.get(url, timeout=10, allow_redirects=False, stream=True) as response:
+                if response.status_code != 200:
+                    return None
+                content = bytearray()
+                for chunk in response.iter_content(chunk_size=8192):
+                    if len(content) + len(chunk) > 1024 * 1024:
+                        return None
+                    content.extend(chunk)
+                try:
+                    return content.decode(response.encoding or 'utf-8', errors='replace')
+                except LookupError:
+                    return content.decode('utf-8', errors='replace')
+    except (RequestException, TypeError, ValueError):
         return None
 
 
 def advisory_fetch_reference_url_from_mailman(advisory):
-    try:
-        year = advisory.id[4:8]
-        month = advisory.id[8:10]
-        mailman_monthly = '{}{}/{}/?count=100'.format(TRACKER_MAILMAN_URL, year, month)
+    year = advisory.id[4:8]
+    month = advisory.id[8:10]
+    mailman_monthly = '{}{}/{}/?count=100'.format(TRACKER_MAILMAN_URL, year, month)
+    content = advisory_fetch_from_mailman(mailman_monthly)
+    if not content:
+        return None
 
-        response = get(mailman_monthly)
-        if 200 != response.status_code:
-            return None
-
-        mailman_url = urlparse(TRACKER_MAILMAN_URL)
-        thread_url_base = join(mailman_url.path, 'thread')
-
-        message_url = None
-        for line in response.text.split('\n'):
-            if thread_url_base in line:
-                match = search(r'href="{}/([/a-zA-Z0-9]+)"'.format(thread_url_base), line)
-                if not match:
-                    continue
-
-                thread = match.group(1)
-                message_url = join(TRACKER_MAILMAN_URL, 'message', thread)
-
-            if not '[{}]'.format(advisory.id) in line:
+    mailman_url = urlparse(TRACKER_MAILMAN_URL)
+    thread_url_base = join(mailman_url.path, 'thread')
+    message_url = None
+    for line in content.splitlines():
+        if thread_url_base in line:
+            match = search(r'href="{}/([/a-zA-Z0-9]+)"'.format(escape(thread_url_base)), line)
+            if not match:
                 continue
-
+            thread = match.group(1)
+            message_url = join(TRACKER_MAILMAN_URL, 'message', thread)
+        if '[{}]'.format(advisory.id) in line:
             return message_url
-        return None
-    except Exception:
-        return None
+    return None
 
 
 def advisory_get_section_from_text(advisory, start, end):
@@ -195,14 +218,7 @@ def advisory_get_workaround_from_text(advisory):
 
 
 def advisory_escape_html(advisory):
-    start = '\nWorkaround\n==========\n\n'
-    end = '\n\nReferences\n==========\n\n'
-    if start not in advisory or end not in advisory:
-        return None
-    start_index = advisory.index(start) + len(start)
-    end_index = advisory.index(end)
-    advisory = advisory[:start_index] + str(html_escape(advisory[start_index:end_index])) + advisory[end_index:]
-    return advisory
+    return str(html_escape(advisory))
 
 
 def advisory_extend_html(advisory, issues, package):
