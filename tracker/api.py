@@ -90,7 +90,7 @@ def handle_internal_error(error):
 
 @api.after_request
 def conditional_public_reads(response):
-    public_reads = {'list_cves', 'get_cve', 'list_packages', 'list_groups', 'get_group',
+    public_reads = {'list_cves', 'get_cve', 'list_packages', 'package_snapshot', 'list_groups', 'get_group',
                     'list_advisories', 'get_advisory', 'list_changes'}
     if (request.method in ('GET', 'HEAD') and response.status_code == 200
             and request.endpoint in {'api_v1.' + name for name in public_reads}):

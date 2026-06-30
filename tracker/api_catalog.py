@@ -43,6 +43,22 @@ def numeric_cursor(value):
     return int(value)
 
 
+def serialize_packages(packages):
+    return [{
+        'name': package.name, 'base': package.base, 'version': package.version,
+        'repository': package.database, 'architecture': package.arch,
+        'description': package.description, 'upstream_url': package.url,
+    } for package in packages]
+
+
+@api.route('/packages/snapshot', methods=['GET'])
+def package_snapshot():
+    if request.args:
+        raise BadRequest('This endpoint does not accept query parameters.')
+    packages = Package.query.order_by(Package.name, Package.database, Package.arch, Package.id).all()
+    return jsonify(items=serialize_packages(packages))
+
+
 @api.route('/packages', methods=['GET'])
 def list_packages():
     limit, after = page_parameters({'name', 'base', 'repository', 'architecture', 'q'})
@@ -57,11 +73,8 @@ def list_packages():
                                  Package.base.contains(term, autoescape=True),
                                  Package.url.contains(term, autoescape=True)))
     rows = query.limit(limit + 1).all()
-    return jsonify(items=[{
-        'name': package.name, 'base': package.base, 'version': package.version,
-        'repository': package.database, 'architecture': package.arch,
-        'description': package.description, 'upstream_url': package.url,
-    } for package in rows[:limit]], next_cursor=str(rows[limit - 1].id) if len(rows) > limit else None)
+    return jsonify(items=serialize_packages(rows[:limit]),
+                   next_cursor=str(rows[limit - 1].id) if len(rows) > limit else None)
 
 
 def timestamp(value):
