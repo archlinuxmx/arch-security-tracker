@@ -1,6 +1,7 @@
 from tracker.model import CVE
 from tracker.model import Advisory
 from tracker.model import CVEGroup
+from tracker.model import Package
 from tracker.model.enum import Publication
 from tracker.model.enum import Severity
 
@@ -23,6 +24,28 @@ def test_package_catalogue(db, client):
     assert matched['items'][0]['version'] == '1.0-1'
     assert client.get('/api/v1/packages?q=%25').get_json()['items'] == []
     assert client.get('/api/v1/packages?after=bad').status_code == 400
+
+    path = '/api/v1/packages/snapshot'
+    snapshot = client.get(path)
+    assert [item['name'] for item in snapshot.get_json()['items']] == ['foo', 'foo-doc']
+    assert snapshot.headers['Cache-Control'] == 'public, no-cache'
+    etag = snapshot.headers['ETag']
+    assert client.get(path, headers={'If-None-Match': etag}).status_code == 304
+    assert client.head(path).headers['ETag'] == etag
+    assert client.get(path + '?limit=1').status_code == 400
+    assert client.get(path + '?q=foo').status_code == 400
+
+    rows = [{column.name: getattr(package, column.name) for column in Package.__table__.columns
+             if column.name != 'id'} for package in Package.query.all()]
+    rows.insert(0, dict(rows[0], name='new', base='new'))
+    Package.query.delete()
+    db.session.bulk_insert_mappings(Package, rows)
+    db.session.commit()
+    refreshed = client.get(path, headers={'If-None-Match': etag})
+    assert refreshed.status_code == 200
+    assert refreshed.headers['ETag'] != etag
+    assert [item['name'] for item in refreshed.get_json()['items']] == ['foo', 'foo-doc', 'new']
+    assert set(refreshed.get_json()) == {'items'}
 
 
 @create_issue(description='Upstream parser fails', severity=Severity.high)
