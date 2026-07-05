@@ -36,6 +36,7 @@ def copy_issue(issue):
     form.reference.data = cve.reference
     form.remote.data = cve.remote.name
     form.severity.data = cve.severity.name
+    form.load_cvss(cve)
 
     return render_template('form/cve.html',
                            title='Add CVE',

@@ -116,6 +116,15 @@ def add_cve():
                 not_merged.append(form.notes)
         form.notes.data = cve.notes
 
+        if form.cvss_values.get('cvss_score') is not None:
+            if cve.cvss_score is None:
+                for field, value in form.cvss_values.items():
+                    setattr(cve, field, value)
+                merged = True
+            elif any(getattr(cve, field) != value for field, value in form.cvss_values.items()):
+                not_merged.append(form.cvss_score)
+        form.load_cvss(cve)
+
         # if something got merged, commit and flash
         if merged:
             db.session.commit()
@@ -144,6 +153,8 @@ def add_cve():
     cve.remote = Remote.fromstring(form.remote.data)
     cve.reference = form.reference.data
     cve.notes = form.notes.data
+    for field, value in form.cvss_values.items():
+        setattr(cve, field, value)
     db.session.add(cve)
     db.session.commit()
     flash('Added {}'.format(cve.id))
