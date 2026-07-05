@@ -64,6 +64,14 @@ def set_and_assert_cve_data(db, client, cve_id, route):
 @logged_in
 def test_add_cve(db, client):
     set_and_assert_cve_data(db, client, 'CVE-1122-0042', url_for('tracker.add_cve'))
+    data = default_issue_dict(dict(cve='CVE-2026-12345', cvss_version='4.0', cvss_score='8.0',
+                                  cvss_vector='CVSS:4.0/AV:N', cvss_source='https://example.org/source'))
+    assert client.post('/cve/add', data=data).status_code == 302
+    issue = CVE.query.get(data['cve'])
+    assert float(issue.cvss_score) == 8.0
+    data['cvss_score'] = '9.0'
+    assert CVE_MERGED_PARTIALLY.split('{}')[0].encode() in client.post('/cve/add', data=data).data
+    assert float(issue.cvss_score) == 8.0
 
 
 @logged_in(role=UserRole.reporter)
@@ -155,6 +163,33 @@ def test_add_invalid_type(db, client):
 @logged_in
 def test_edit_cve(db, client):
     set_and_assert_cve_data(db, client, DEFAULT_ISSUE_ID, url_for('tracker.edit_cve', cve=DEFAULT_ISSUE_ID))
+    issue = CVE.query.get(DEFAULT_ISSUE_ID)
+    path = url_for('tracker.edit_cve', cve=issue.id)
+    cvss = dict(cvss_version='3.1', cvss_score='7.5', cvss_vector='CVSS:3.1/AV:N',
+                cvss_source='https://example.org/assessment')
+    data = default_issue_dict(dict(changed=str(issue.changed), **cvss))
+    stale = data.copy()
+    assert client.post(path, data=data).status_code == 302
+    assert float(issue.cvss_score) == 7.5
+    assert issue.severity == Severity.unknown
+    assert b'value="7.5"' in client.get(path).data
+    assert b'https://example.org/assessment' in client.get('/' + issue.id + '/copy').data
+    data['changed'] = str(issue.changed)
+    data['cvss_score'] = '11'
+    assert b'between 0 and 10' in client.post(path, data=data).data
+    assert float(issue.cvss_score) == 7.5
+    data['cvss_score'] = 'NaN'
+    assert b'between 0 and 10' in client.post(path, data=data).data
+    stale['cvss_score'] = '6.0'
+    assert client.post(path, data=stale).status_code == 409
+    assert float(issue.cvss_score) == 7.5
+    # Older clients that omit these fields leave the assessment intact.
+    data = default_issue_dict(dict(changed=str(issue.changed), notes='Unrelated edit'))
+    assert client.post(path, data=data).status_code == 302
+    assert float(issue.cvss_score) == 7.5
+    data.update(changed=str(issue.changed), **{name: '' for name in cvss})
+    assert client.post(path, data=data).status_code == 302
+    assert issue.cvss_score is None
 
 
 @create_issue

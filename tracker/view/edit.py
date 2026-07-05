@@ -157,6 +157,7 @@ def edit_cve(cve):
         form.remote.data = cve.remote.name
         form.reference.data = cve.reference
         form.notes.data = cve.notes
+        form.load_cvss(cve)
         form.changed.data = str(cve.changed)
         form.changed_latest.data = str(cve.changed)
 
@@ -187,6 +188,9 @@ def edit_cve(cve):
             issue.reference_mod = cve.reference != issue.reference
             issue.notes = form.notes.data
             issue.notes_mod = cve.notes != issue.notes
+            for field, value in form.cvss_values.items():
+                setattr(issue, field, value)
+                setattr(issue, field + '_mod', getattr(cve, field) != value)
 
             if form.changed_latest.data != cve.changed:
                 form.force_submit.data = False
@@ -220,6 +224,8 @@ def edit_cve(cve):
     cve.remote = Remote.fromstring(form.remote.data)
     cve.reference = form.reference.data
     cve.notes = form.notes.data
+    for field, value in form.cvss_values.items():
+        setattr(cve, field, value)
 
     if severity_changed or issue_type_changed:
         from tracker.api_workflow import refresh_group

@@ -54,5 +54,14 @@
 						</td>
 					</tr>
 					{%- endif %}
+					{%- for field, label in [('cvss_version', 'CVSS version'), ('cvss_score', 'CVSS score'),
+                                                 ('cvss_vector', 'CVSS vector'), ('cvss_source', 'CVSS source')] %}
+					{%- if issue|attr(field ~ '_mod') %}
+					<tr>
+						<td>{{ label }}</td>
+						<td class="full size">{{ colorize_diff(issue.previous|attr(field), diff_content(issue, issue|attr(field))) }}</td>
+					</tr>
+					{%- endif %}
+					{%- endfor %}
 				</tbody>
 			</table>

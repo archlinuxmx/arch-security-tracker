@@ -227,6 +227,19 @@ def test_create_cve_metadata(db, client, api_token):
     assert client.get(response.headers['Location']).get_json() == response.get_json()
     assert CVE.query.one().reference == '\n'.join(expected['references'])
     assert b'CVSS 3.1' in client.get('/' + payload['name']).data
+    for path in ('/' + payload['name'] + '/log', '/log'):
+        history = client.get(path)
+        assert history.status_code == 200
+        assert b'CVSS score' in history.data
+        assert payload['cvss']['vector'].encode() in history.data
+    cve = CVE.query.one()
+    cve.cvss_score = None
+    cve.cvss_version = cve.cvss_vector = cve.cvss_source = None
+    db.session.commit()
+    history = client.get('/' + payload['name'] + '/log')
+    assert history.status_code == 200
+    assert b'CVSS score' in history.data
+    assert payload['cvss']['vector'].encode() in history.data
 
 
 def test_invalid_metadata_is_atomic(db, client, api_token):
