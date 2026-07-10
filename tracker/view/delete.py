@@ -16,6 +16,7 @@ from tracker.model.advisory import advisory_regex
 from tracker.model.cve import cve_id_regex
 from tracker.model.cvegroup import vulnerability_group_regex
 from tracker.model.enum import Publication
+from tracker.model.enum import highest_severity
 from tracker.user import reporter_required
 from tracker.user import security_team_required
 from tracker.user import user_can_delete_group
@@ -109,9 +110,8 @@ def delete_issue(issue):
     group_entries = (db.session.query(CVEGroup, CVE)
                      .join(CVEGroupEntry, CVEGroup.issues)
                      .join(CVE, CVEGroupEntry.cve)
+                     .filter(CVEGroup.id.in_(group_ids))
                      .order_by(CVE.id.desc()))
-    if group_ids:
-        group_entries = group_entries.filter(CVEGroup.id.in_(group_ids))
     group_entries = group_entries.all()
 
     group_issues = defaultdict(set)
@@ -139,9 +139,15 @@ def delete_issue(issue):
 
     # delete groups that only contain this issue
     for group, issues in group_issues.items():
-        if 0 == len(list(filter(lambda e: e.id != issue.id, issues))):
+        remaining = [entry for entry in issues if entry.id != issue.id]
+        if not remaining:
             flash('Deleted {}'.format(group))
             db.session.delete(group)
+        else:
+            for entry in list(group.issues):
+                if entry.cve_id == issue.id:
+                    group.issues.remove(entry)
+            group.severity = highest_severity(entry.severity for entry in remaining)
 
     db.session.delete(issue)
     db.session.commit()

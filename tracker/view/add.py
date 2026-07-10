@@ -12,6 +12,7 @@ from tracker.model import Advisory
 from tracker.model import CVEGroup
 from tracker.model import CVEGroupEntry
 from tracker.model import CVEGroupPackage
+from tracker.model.cvegroup import refresh_group
 from tracker.model.enum import Affected
 from tracker.model.enum import Remote
 from tracker.model.enum import Severity
@@ -45,6 +46,7 @@ def add_cve():
 
     cve = db.get(CVE, id=form.cve.data)
     if cve is not None:
+        old_type = cve.issue_type
         advisories = (db.session.query(Advisory)
                       .join(CVEGroupEntry, CVEGroupEntry.cve_id == cve.id)
                       .join(CVEGroup, CVEGroupEntry.group)
@@ -102,9 +104,13 @@ def add_cve():
         for reference in form_references:
             if reference not in references:
                 references.append(reference)
-                merged = True
         if old_references != references:
-            cve.reference = '\n'.join(references)
+            combined = '\n'.join(references)
+            if len(combined) > CVE.REFERENCES_LENGTH:
+                not_merged.append(form.reference)
+            else:
+                cve.reference = combined
+                merged = True
         form.reference.data = cve.reference
 
         # try to merge notes
@@ -127,11 +133,16 @@ def add_cve():
 
         # if something got merged, commit and flash
         if merged:
+            groups = CVEGroup.query.join(CVEGroupEntry).filter(CVEGroupEntry.cve_id == cve.id).all()
+            for group in groups:
+                refresh_group(group, update_type=old_type != cve.issue_type)
             db.session.commit()
             flash(CVE_MERGED.format(cve.id))
 
         # warn if something failed to be merged
         if not_merged:
+            form.changed.data = str(cve.changed)
+            form.changed_latest.data = str(cve.changed)
             for field in not_merged:
                 field.errors.append(ERROR_UNMERGEABLE)
 

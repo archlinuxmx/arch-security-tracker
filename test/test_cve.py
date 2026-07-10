@@ -1,16 +1,21 @@
 
 from datetime import datetime
+from re import search
 
 from flask import url_for
+from sqlalchemy_continuum import version_class
 from werkzeug.exceptions import Forbidden
 from werkzeug.exceptions import NotFound
 
 from tracker.form import CVEForm
 from tracker.form.validators import ERROR_INVALID_URL
 from tracker.form.validators import ERROR_ISSUE_ID_INVALID
+from tracker.model.advisory import Advisory
 from tracker.model.cve import CVE
 from tracker.model.cve import issue_types
 from tracker.model.cvegroup import CVEGroup
+from tracker.model.cvegroupentry import CVEGroupEntry
+from tracker.model.cvegrouppackage import CVEGroupPackage
 from tracker.model.enum import Publication
 from tracker.model.enum import Remote
 from tracker.model.enum import Severity
@@ -235,11 +240,34 @@ def test_edit_cve_invalid(db, client):
 @create_issue
 @logged_in(role=UserRole.reporter)
 def test_reporter_can_delete(db, client):
+    issue = CVE.query.get(DEFAULT_ISSUE_ID)
+    issue.severity = Severity.high
+    remaining = CVE.new('CVE-2026-10001')
+    remaining.severity = Severity.low
+    single = CVEGroup(affected='1.0-1', severity=Severity.high,
+                      issues=[CVEGroupEntry(cve=issue)], packages=[CVEGroupPackage(pkgname='foo')])
+    shared = CVEGroup(affected='1.0-1', severity=Severity.high,
+                      issues=[CVEGroupEntry(cve=issue), CVEGroupEntry(cve=remaining)],
+                      packages=[CVEGroupPackage(pkgname='bar')])
+    db.session.add_all([single, shared])
+    db.session.commit()
+    single_id, shared_id = single.id, shared.id
+    link_id = next(entry.id for entry in shared.issues if entry.cve_id == issue.id)
+    changed = shared.changed
+
     resp = client.post(url_for('tracker.delete_issue', issue=DEFAULT_ISSUE_ID), follow_redirects=True,
                        data=dict(confirm=True))
     assert 200 == resp.status_code
     cve = CVE.query.get(DEFAULT_ISSUE_ID)
     assert cve is None
+    assert CVEGroup.query.get(single_id) is None
+    shared = CVEGroup.query.get(shared_id)
+    assert shared.severity == Severity.low
+    assert shared.changed > changed
+    assert [entry.cve_id for entry in shared.issues] == ['CVE-2026-10001']
+    assert client.get('/api/v1/groups/AVG-{}'.format(shared_id)).get_json()['severity'] == 'low'
+    history = version_class(CVEGroupEntry)
+    assert history.query.filter_by(id=link_id).order_by(history.transaction_id.desc()).first().operation_type == 2
 
 
 @create_issue
@@ -409,6 +437,19 @@ def test_add_cve_does_not_overwrite_existing_cve(db, client):
     assert 'foobar' == cve.description
     assert 'https://archlinux.org\nhttps://security.archlinux.org' == cve.reference
     assert 'the cake is a lie' == cve.notes
+    changed = search(r'name="changed"[^>]*value="([^"]*)"', resp.data.decode()).group(1)
+    corrected = default_issue_dict(dict(
+        issue_type=cve.issue_type, severity=cve.severity.name, remote=cve.remote.name,
+        description='Reviewed description', reference=cve.reference, notes=cve.notes, changed=changed))
+    assert client.post('/{}/edit'.format(cve.id), data=corrected).status_code == 302
+    assert cve.description == 'Reviewed description'
+    reference = 'https://example.org/' + 'a' * (CVE.REFERENCES_LENGTH - len('https://example.org/'))
+    cve.reference = reference
+    db.session.commit()
+    response = client.post('/cve/add', data=default_issue_dict(dict(reference='https://example.org/another')))
+    assert response.status_code == 200
+    assert CVE_MERGED_PARTIALLY.format(cve.id, 'References').encode() in response.data
+    assert cve.reference == reference
 
 
 @create_issue(description='foo AVG-1 bar CVE-1234-5678 qux https://foo.bar doo CVE-1337-1337.')
@@ -548,6 +589,21 @@ def test_merge_issue_as_security_team_with_referenced_advisory(db, client):
 
     issue = CVE.query.get(DEFAULT_ISSUE_ID)
     assert 'changed' == issue.description
+    advisory = Advisory.query.get(DEFAULT_ADVISORY_ID)
+    assert advisory.advisory_type == issue_types[1]
+
+    resp = client.post(url_for('tracker.add_cve'), data=default_issue_dict(dict(
+        issue_type='denial of service', severity=Severity.high.name)))
+    assert resp.status_code == 302
+    assert CVEGroup.query.get(DEFAULT_GROUP_ID).severity == Severity.high
+    assert Advisory.query.get(DEFAULT_ADVISORY_ID).advisory_type == 'denial of service'
+
+    advisory = Advisory.query.get(DEFAULT_ADVISORY_ID)
+    advisory.advisory_type = 'multiple issues'
+    db.session.commit()
+    resp = client.post(url_for('tracker.add_cve'), data=default_issue_dict(dict(notes='More context')))
+    assert resp.status_code == 302
+    assert Advisory.query.get(DEFAULT_ADVISORY_ID).advisory_type == 'multiple issues'
 
 
 @logged_in(role=UserRole.reporter)
