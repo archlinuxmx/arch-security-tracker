@@ -13,3 +13,8 @@ vector syntax and the HTTP(S) source URL; it does not calculate scores or verify
 metric choices. Arch severity remains independently reviewed. One selected
 assessment is stored, displayed and versioned.
 Omission preserves an existing assessment; `null` clears it.
+
+CVE and activity logs show changes to the CVSS version, score, vector and source.
+
+Browser create, edit and copy forms use the same validation. Emptying all four
+fields clears the assessment; an omitted assessment leaves it unchanged.

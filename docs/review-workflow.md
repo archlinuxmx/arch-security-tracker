@@ -17,6 +17,9 @@ when relationship changes leave legacy timestamps unchanged.
 `/review/intake` stores immutable disclosures with a source reference and private
 evidence; CVE IDs can be supplied later. Sources may identify archived messages
 or mailbox/message IDs. Mail collection stays outside the tracker.
+External tools can submit through [private API intake](api-v1.md#private-intake)
+with an `intake:create` token and a stable idempotency key. Submissions enter
+this queue without creating a public CVE.
 
 Decisions (pending, approved, rejected) retain author, reason and revision.
 Correct an immutable disclosure by submitting a replacement and rejecting the
