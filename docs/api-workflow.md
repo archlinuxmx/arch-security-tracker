@@ -65,11 +65,22 @@ With an `advisories:write` token and Security Team membership:
 
 Creation returns `201` and `items`. The group needs CVEs, packages, a supplied
 fix version, `fixed` status and no existing advisory. Conflicts return `409`.
-IDs use the current UTC month and next available number; after an allocation
-conflict, fetch the group's state before retrying.
+IDs use the current UTC month and next available number. After a timeout or
+conflict, GET `/api/v1/groups/AVG-1234/advisory-drafts` with the same token to
+recover scheduled drafts ordered by package. It returns `items` (possibly empty)
+and excludes published advisories. An unknown group returns `404`.
 
 Content is generated from the existing template and current CVE/group data.
-Drafts require authentication and cannot be cached. Generation sends no mail,
+Drafts require active Security Team membership and cannot be cached. Browser
+views and history use the same visibility rule; published revisions stay public.
+Generation sends no mail,
 fetches no URLs and publishes nothing. Publication fields and arbitrary content
 are not writable. Published advisories return `409 already_published` here;
 review, send and publish through the existing team/browser workflow.
+
+Browser publication checks references on the configured Mailman archive only.
+Redirects are refused and fetched content is limited to 1 MiB. Existing references
+remain readable; unrelated edits preserve them without refetching.
+
+If a group loses its fixed version, draft API content is empty and browser
+preview returns `409`. Restore the fixed version before generating or publishing.

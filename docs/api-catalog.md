@@ -1,6 +1,6 @@
 # Public catalogue API
 
-All routes are under `/api/v1`. Collections return `items` and `next_cursor`.
+All routes are under `/api/v1`. Paginated collections return `items` and `next_cursor`.
 Pass the cursor as `after` with unchanged filters; null ends enumeration.
 `limit` defaults to 50 (range 1–100). Unknown/repeated parameters return `400`.
 See the [OpenAPI schema](openapi-v1.yaml) for fields and filters.
@@ -12,8 +12,12 @@ filters are `name`, `base`, `repository`, and `architecture`; `q` searches liter
 substrings in name, base and upstream URL. Compare versions with libalpm.
 
 The cursor is an opaque decimal row ID. Package refreshes can replace rows
-while paging; there is no snapshot guarantee. Periodically download the full
-catalogue and replace the local cache only when the download completes.
+while paging, so pages can repeat or omit packages.
+
+For ingestion matching, use `GET /packages/snapshot`. It reads the complete
+catalogue in one query and returns `items`, without a cursor or query parameters.
+Rows are ordered by name, repository and architecture. Replace the local cache
+atomically after receiving a complete, valid `200` response; keep it on `304`.
 
 ## CVEs and groups
 

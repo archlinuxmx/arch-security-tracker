@@ -14,7 +14,7 @@ Remote clients must use HTTPS; local examples use HTTP on loopback.
 Log in and open `/tokens`. Active reporters can create and revoke their own
 named tokens. Copy the secret once; only its SHA-256 digest is stored.
 Tokens expire after 90 days and have one scope: `cves:create`, `cves:update`,
-`groups:create`, `groups:update`, or `advisories:write`. The advisory scope
+`groups:create`, `groups:update`, `intake:create`, or `advisories:write`. The advisory scope
 requires the Security Team or administrator role. Existing tokens remain
 create-only. Use a separate token for each operation and replace it before expiry.
 
@@ -29,7 +29,7 @@ role and active flag; SSO group changes reach that account only on login.
 curl --fail 'http://127.0.0.1:5000/api/v1/cves?limit=50'
 ```
 
-Collections return `items` and `next_cursor`; pass the cursor as `after`.
+Paginated public collections return `items` and `next_cursor`; pass the cursor as `after`.
 A null cursor ends enumeration. `limit` defaults to 50 and accepts 1–100;
 unknown or repeated parameters return `400`.
 
@@ -41,6 +41,22 @@ CVEs have empty group/package arrays. Timestamps use UTC with a trailing `Z`.
 
 Public reads support `ETag`/`If-None-Match` and return `304` when unchanged.
 Their cache policy is `public, no-cache`; drafts, writes and errors use `no-store`.
+
+## Private intake
+
+Use an `intake:create` token to POST `/api/v1/intake` with `title` and `source`.
+Optional fields are `cve_name` (identifier or null), `evidence`, `description`
+and `references`. Evidence stays private; description/references are proposals
+for later publication. The usual 64 KiB request limit applies.
+
+Supply `Idempotency-Key` using 1–128 ASCII letters, digits, dots, underscores,
+colons or hyphens. Keys belong to the account, so token rotation preserves retries.
+Titles/sources are trimmed and references deduplicated before comparison.
+New submissions return `201`; identical retries return `200` with the current
+receipt; changed content under the same key returns `409 idempotency_conflict`.
+The receipt includes a private browser `review_url`, also sent as `Location`.
+Submission publishes nothing; [review and promotion](review-workflow.md#disclosure-queue)
+remain browser actions. Responses use `no-store`.
 
 ## Creating CVEs
 
@@ -72,7 +88,7 @@ print(response.status_code, response.json())
 ```
 
 Creation immediately publishes all fields, including notes, and attributes the
-change to the token owner. Keep unreviewed candidates in the ingestion tool.
+change to the token owner. Submit unreviewed candidates through private intake.
 Private provenance and review reasons belong in the review workflow.
 Success returns `201`, the record and `Location`. Duplicates return
 `409 already_exists` without changing anything, including concurrent creates.

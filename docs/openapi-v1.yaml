@@ -88,7 +88,7 @@ paths:
       operationId: listPackages
       summary: List repository package variants
       description: Exact filters except q, a literal substring in name/base/upstream URL. Database-row cursor
-        is not a snapshot; periodically refresh the complete catalogue.
+        is not a snapshot; use /packages/snapshot for a complete ingestion catalogue.
       parameters:
         - {$ref: '#/components/parameters/Limit'}
         - {$ref: '#/components/parameters/NumericAfter'}
@@ -112,6 +112,18 @@ paths:
         '200': {$ref: '#/components/responses/PackagePage'}
         default: {$ref: '#/components/responses/Error'}
         '304': {$ref: '#/components/responses/NotModified'}
+  /packages/snapshot:
+    get:
+      operationId: getPackageSnapshot
+      summary: Read the complete package catalogue
+      description: One database query returns all variants ordered by name, repository and architecture.
+        No cursor or query parameters. Replace ingestion caches only after receiving the complete response.
+      parameters:
+        - {$ref: '#/components/parameters/IfNoneMatch'}
+      responses:
+        '200': {$ref: '#/components/responses/PackageSnapshot'}
+        '304': {$ref: '#/components/responses/NotModified'}
+        default: {$ref: '#/components/responses/Error'}
   /groups:
     get:
       operationId: listGroups
@@ -222,9 +234,40 @@ paths:
         '200': {$ref: '#/components/responses/Changes'}
         default: {$ref: '#/components/responses/Error'}
         '304': {$ref: '#/components/responses/NotModified'}
+  /intake:
+    post:
+      operationId: createIntake
+      summary: Submit a private disclosure for review
+      description: Requires intake:create scope. Account-scoped keys deduplicate normalized content across
+        token rotation. Trims title/source and deduplicates references. Identical retries return the current
+        receipt; changed content under the same key returns 409. No automatic publication. Responses are no-store.
+      security:
+        - bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/IntakeCreate'}
+      responses:
+        '201': {$ref: '#/components/responses/IntakeReceipt'}
+        '200': {$ref: '#/components/responses/IntakeReceipt'}
+        default: {$ref: '#/components/responses/Error'}
   /groups/{name}/advisory-drafts:
     parameters:
       - {$ref: '#/components/parameters/GroupName'}
+    get:
+      operationId: listAdvisoryDrafts
+      summary: Recover a group's scheduled drafts
+      description: Requires advisories:write scope and Security Team membership. Returns items ordered by
+        package, excluding published advisories. Empty for groups without drafts; 404 for unknown groups.
+        Responses are no-store.
+      security:
+        - bearerAuth: []
+      responses:
+        '200': {$ref: '#/components/responses/DraftBatch'}
+        default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createAdvisoryDrafts
       summary: Generate one private draft per AVG package
@@ -280,13 +323,13 @@ components:
       type: http
       scheme: bearer
       description: 'Personal token created through the CSRF-protected /tokens browser page. One scope per token:
-        cves:create, cves:update, groups:create, groups:update, or advisories:write. Expires after 90 days;
+        cves:create, cves:update, groups:create, groups:update, intake:create, or advisories:write. Expires after 90 days;
         owner activity and role are checked on every request. Reporter or higher is required; advisories:write
         requires Security Team or administrator. Browser cookies do not authorize API operations.'
   responses:
     Error:
-      description: 'JSON error. 400 bad_request/invalid_json; 401 unauthorized (Bearer challenge); 403 forbidden;
-        404 not_found; 405 method_not_allowed; 409 already_exists/already_grouped/advisory_exists/already_published/group_not_fixed/concurrent_creation;
+      description: 'JSON error. 400 bad_request/invalid_json/invalid_idempotency_key; 401 unauthorized (Bearer challenge); 403 forbidden;
+        404 not_found; 405 method_not_allowed; 409 already_exists/already_grouped/advisory_exists/already_published/group_not_fixed/concurrent_creation/idempotency_conflict;
         412 precondition_failed; 413 payload_too_large; 415 unsupported_media_type; 422 validation_error; 428
         precondition_required; 500 internal_error. All errors use Cache-Control: no-store. fields is present
         when individual field errors are available.'
@@ -311,6 +354,13 @@ components:
       content:
         application/json:
           schema: {$ref: '#/components/schemas/CVEPage'}
+    PackageSnapshot:
+      description: Complete package catalogue.
+      headers:
+        ETag: {$ref: '#/components/headers/ETag'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/PackageSnapshot'}
     PackagePage:
       description: PackagePage representation.
       headers:
@@ -367,6 +417,13 @@ components:
       content:
         application/json:
           schema: {$ref: '#/components/schemas/DraftBatch'}
+    IntakeReceipt:
+      description: Private receipt; created on 201, current state on an identical retry (200).
+      headers:
+        Location: {$ref: '#/components/headers/Location'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/IntakeReceipt'}
     CVECreated:
       description: CVE created.
       headers:
@@ -695,6 +752,30 @@ components:
         - time alteration
         - url request injection
         - xml external entity injection
+    IntakeCreate:
+      type: object
+      additionalProperties: false
+      required: [title, source]
+      description: Nonblank title/source; optional text defaults to empty, references to [], CVE to null.
+        Source identifies a message or archive; it need not be a URL. The total request limit is 65536 bytes.
+      properties:
+        title: {type: string, minLength: 1, maxLength: 255}
+        source: {type: string, minLength: 1, maxLength: 2048}
+        cve_name: {type: string, nullable: true, maxLength: 64, pattern: '^CVE-[0-9]{4}-[0-9]{4,}$'}
+        evidence: {type: string, maxLength: 65536, description: Private evidence; never copied to a public CVE.}
+        description: {$ref: '#/components/schemas/Text'}
+        references: {$ref: '#/components/schemas/References'}
+    IntakeReceipt:
+      type: object
+      required: [id, state, revision, cve_name, promoted_cve, review_url, created]
+      properties:
+        id: {type: integer}
+        state: {type: string, enum: [pending, approved, rejected]}
+        revision: {type: integer}
+        cve_name: {type: string, nullable: true}
+        promoted_cve: {type: string, nullable: true}
+        review_url: {type: string, description: Relative browser URL; reporter login required.}
+        created: {type: string, format: date-time}
     DraftCreate:
       type: object
       additionalProperties: false
@@ -757,6 +838,13 @@ components:
           type: array
           items: {$ref: '#/components/schemas/CVE'}
         next_cursor: {type: string, nullable: true}
+    PackageSnapshot:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Package'}
     PackagePage:
       type: object
       required: [items, next_cursor]
@@ -782,6 +870,11 @@ components:
           items: {$ref: '#/components/schemas/Advisory'}
         next_cursor: {type: string, nullable: true}
   parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9._:-]{1,128}$'}
     Limit:
       name: limit
       in: query
