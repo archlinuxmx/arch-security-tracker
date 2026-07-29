@@ -90,16 +90,11 @@ def search(pkgname, arch=None, testing=True, filter_arch=False, force_fresh_hand
 
 def filter_duplicates(packages, filter_arch=False):
     filtered = []
+    seen = set()
     for pkg in packages:
-        contains = False
-        for f in filtered:
-            if f.version != pkg.version or f.db.name != pkg.db.name:
-                continue
-            if not filter_arch and f.arch != pkg.arch:
-                continue
-            contains = True
-            break
-        if not contains:
+        key = (pkg.name, pkg.version, pkg.db.name, None if filter_arch else pkg.arch)
+        if key not in seen:
+            seen.add(key)
             filtered.append(pkg)
     return filtered
 
