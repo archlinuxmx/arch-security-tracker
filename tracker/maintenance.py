@@ -1,52 +1,34 @@
 from collections import defaultdict
 from datetime import datetime
 
-from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 
 from tracker import db
 from tracker.model import CVE
 from tracker.model import CVEGroup
 from tracker.model import CVEGroupEntry
-from tracker.model import CVEGroupPackage
 from tracker.model import Package
 from tracker.model.enum import Status
-from tracker.model.enum import affected_to_status
+from tracker.model.enum import group_status
 from tracker.model.enum import highest_severity
 from tracker.model.enum import status_to_affected
 from tracker.pacman import search
 
 
 def update_group_status():
-    updated = []
-    groups = (db.session.query(CVEGroup, func.group_concat(CVEGroupPackage.pkgname, ' '))
-                .join(CVEGroupPackage)
-                .filter(CVEGroup.status.in_([Status.vulnerable, Status.testing]))
-                .group_by(CVEGroupPackage.group_id)).all()
-    for group, pkgnames in groups:
-        pkgnames = pkgnames.split(' ')
-        package = Package.query.filter(Package.name.in_(pkgnames)).order_by(Package.name).first()
-        if package is None:
-            continue
-        new_status = affected_to_status(status_to_affected(group.status), package.name, group.fixed)
-        if group.status is not new_status:
-            updated.append(dict(group=group, old_status=group.status))
-        group.status = new_status
-    db.session.commit()
-    return updated
+    groups = CVEGroup.query.filter(CVEGroup.status.in_([Status.vulnerable, Status.testing, Status.fixed]))
+    return _recalculate_group_status(groups)
 
 
 def recalc_group_status():
+    return _recalculate_group_status(CVEGroup.query)
+
+
+def _recalculate_group_status(groups):
     updated = []
-    groups = (db.session.query(CVEGroup, func.group_concat(CVEGroupPackage.pkgname, ' '))
-                .join(CVEGroupPackage)
-                .group_by(CVEGroupPackage.group_id)).all()
-    for group, pkgnames in groups:
-        pkgnames = pkgnames.split(' ')
-        package = Package.query.filter(Package.name.in_(pkgnames)).order_by(Package.name).first()
-        if package is None:
-            continue
-        new_status = affected_to_status(status_to_affected(group.status), package.name, group.fixed)
+    for group in groups:
+        packages = [package.pkgname for package in group.packages]
+        new_status = group_status(status_to_affected(group.status), packages, group.fixed, group.status)
         if group.status is not new_status:
             updated.append(dict(group=group, old_status=group.status))
         group.status = new_status

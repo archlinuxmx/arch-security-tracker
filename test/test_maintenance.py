@@ -10,12 +10,27 @@ from tracker import maintenance
 from tracker import pacman
 from tracker.cli import cli
 from tracker.model import CVEGroup
+from tracker.model import CVEGroupPackage
 from tracker.model import Package
 from tracker.model.enum import Severity
+from tracker.model.enum import Status
 
 from .conftest import create_group
 from .conftest import create_issue
 from .conftest import create_package
+
+
+@pytest.mark.parametrize('filter_arch', [False, True])
+def test_pacman_search_keeps_distinct_package_names(monkeypatch, filter_arch):
+    repository = SimpleNamespace(name='core')
+    foo = SimpleNamespace(name='foo', version='1-1', db=repository, arch='x86_64')
+    bar = SimpleNamespace(name='bar', version='1-1', db=repository, arch='x86_64')
+    other_arch = SimpleNamespace(name='foo', version='1-1', db=repository, arch='aarch64')
+    repository.search = lambda name: [foo, bar, foo, other_arch]
+    handle = SimpleNamespace(get_syncdbs=lambda: [repository])
+    monkeypatch.setattr(pacman, 'get_handle', lambda *args, **kwargs: handle)
+    assert pacman.search('', sort_results=False, filter_arch=filter_arch) == (
+        [foo, bar] if filter_arch else [foo, bar, other_arch])
 
 
 @create_package(name='old')
@@ -80,6 +95,47 @@ def test_recalculate_group_severity(db, app):
         assert result.exit_code == 0, result.output
         assert CVEGroup.query.filter_by(id=1).one().severity == Severity.high
         assert CVEGroup.query.filter_by(id=2).one().severity == Severity.low
+
+
+@create_package(name='foo', version='1-1')
+@create_package(name='foo-doc', base='foo', version='1-1')
+@create_group(id=1, packages=['foo'], status=Status.fixed, fixed='2-1')
+@create_group(id=2, packages=['removed'], status=Status.fixed, fixed='2-1')
+@create_group(id=3, packages=['foo'], status=Status.not_affected)
+def test_refresh_reopens_fixed_groups_after_package_rollback(db, app):
+    runner = app.test_cli_runner()
+    result = runner.invoke(cli, ['update', 'group'])
+    assert result.exit_code == 0, result.output
+    assert CVEGroup.query.filter_by(id=1).one().status == Status.vulnerable
+    assert CVEGroup.query.filter_by(id=2).one().status == Status.fixed
+    assert CVEGroup.query.filter_by(id=3).one().status == Status.not_affected
+
+    package = Package.query.filter_by(name='foo').one()
+    package.version = '2-1'
+    package.database = 'core-testing'
+    db.session.commit()
+    result = runner.invoke(cli, ['update', 'group'])
+    assert result.exit_code == 0, result.output
+    assert CVEGroup.query.filter_by(id=1).one().status == Status.testing
+
+    group = CVEGroup.query.filter_by(id=1).one()
+    group.packages.append(CVEGroupPackage(pkgname='foo-doc'))
+    db.session.commit()
+    maintenance.update_group_status()
+    assert group.status == Status.vulnerable
+
+    documentation = Package.query.filter_by(name='foo-doc').one()
+    documentation.version = '2-1'
+    documentation.database = 'core-testing'
+    package.database = 'core'
+    db.session.commit()
+    maintenance.update_group_status()
+    assert group.status == Status.testing
+
+    documentation.database = 'core'
+    db.session.commit()
+    maintenance.update_group_status()
+    assert group.status == Status.fixed
 
 
 def test_database_maintenance_commands(app, db, monkeypatch):
