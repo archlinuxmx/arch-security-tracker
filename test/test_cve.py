@@ -3,6 +3,7 @@ from datetime import datetime
 from re import search
 
 from flask import url_for
+from pytest import mark
 from sqlalchemy_continuum import version_class
 from werkzeug.exceptions import Forbidden
 from werkzeug.exceptions import NotFound
@@ -96,12 +97,12 @@ def test_add_needs_login(db, client):
 
 @logged_in
 def test_add_invalid_cve_id(db, client):
-    cve_id = 'LOL'
-    data = default_issue_dict()
-    data.update(dict(cve=cve_id))
-    resp = client.post(url_for('tracker.add_cve'), follow_redirects=True, data=data)
-    assert 200 == resp.status_code
-    assert ERROR_ISSUE_ID_INVALID in resp.data.decode()
+    for cve_id in ('LOL', 'CVE-2026-' + '1' * 57, 'CVE-２０２６-１２３４'):
+        data = default_issue_dict(dict(cve=cve_id))
+        resp = client.post(url_for('tracker.add_cve'), data=data)
+        assert 200 == resp.status_code
+        assert ERROR_ISSUE_ID_INVALID in resp.data.decode()
+        assert CVE.query.count() == 0
 
 
 @logged_in
@@ -126,12 +127,13 @@ def test_cve_id_suffix_long(db, client):
 
 @logged_in
 def test_add_invalid_reference(db, client):
-    reference = 'OMG'
-    data = default_issue_dict()
-    data.update(dict(reference=reference))
-    resp = client.post(url_for('tracker.add_cve'), follow_redirects=True, data=data)
-    assert 200 == resp.status_code
-    assert ERROR_INVALID_URL.format(reference) in resp.data.decode()
+    for reference in ('OMG', 'https://user@/', 'https://example.org:999999/',
+                      'https://example.org/with\x00control'):
+        data = default_issue_dict(dict(reference=reference))
+        resp = client.post(url_for('tracker.add_cve'), data=data)
+        assert 200 == resp.status_code
+        assert ERROR_INVALID_URL.format(reference) in resp.data.decode()
+        assert CVE.query.count() == 0
 
 
 @logged_in
@@ -207,6 +209,14 @@ def test_reporter_can_edit(db, client):
     assert 200 == resp.status_code
     cve = CVE.query.get(DEFAULT_ISSUE_ID)
     assert description == cve.description
+    for reference in ('ftp://example.org/legacy-advisory', 'git://git.kernel.org/source',
+                      'ssh://git@github.com/archlinux/example'):
+        cve.reference = reference
+        db.session.commit()
+        data.update(changed=str(cve.changed), reference=reference, notes='Keep the archived reference')
+        assert client.post(url_for('tracker.edit_cve', cve=cve.id), data=data).status_code == 302
+        assert cve.reference == reference
+        assert cve.notes == 'Keep the archived reference'
 
 
 @create_issue
@@ -235,6 +245,35 @@ def test_edit_cve_invalid(db, client):
     assert 'Edit {}'.format(DEFAULT_ISSUE_ID) in resp.data.decode()
     assert ERROR_INVALID_CHOICE in resp.data.decode()
     assert 1 == resp.data.decode().count(ERROR_INVALID_CHOICE)
+
+
+@mark.parametrize('field', ['severity', 'remote', 'issue_type'])
+@create_issue(description='Stored description')
+@logged_in(role=UserRole.reporter)
+def test_cve_conflict_preserves_invalid_enum_errors(db, client, field):
+    issue = CVE.query.one()
+    versions = issue.versions.count()
+    data = default_issue_dict({'changed': 'stale-revision', 'description': 'Submitted description',
+                               field: 'fromstring'})
+    response = client.post(url_for('tracker.edit_cve', cve=issue.id), data=data)
+    assert response.status_code == 409
+    assert ERROR_INVALID_CHOICE.encode() in response.data
+    assert b'The remote data has changed' in response.data
+    assert b'Submitted description' in response.data
+    assert b'name="force_submit"' in response.data
+    assert issue.description == 'Stored description'
+    assert issue.versions.count() == versions
+
+    data.update(severity=issue.severity.name, remote=issue.remote.name, issue_type=issue.issue_type)
+    response = client.post(url_for('tracker.edit_cve', cve=issue.id), data=data)
+    assert response.status_code == 409
+    assert b'Stored description' in response.data and b'Submitted description' in response.data
+    assert issue.versions.count() == versions
+
+    data.update(changed_latest=str(issue.changed), force_submit='y')
+    assert client.post(url_for('tracker.edit_cve', cve=issue.id), data=data).status_code == 302
+    assert issue.description == 'Submitted description'
+    assert issue.versions.count() == versions + 1
 
 
 @create_issue
