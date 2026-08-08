@@ -97,6 +97,11 @@ def test_reporter_can_copy(db, client):
 @create_package(name='foo')
 @logged_in
 def test_add_implicit_issue_creation(db, client):
+    for issue_id in ('CVE-2026-' + '1' * 57, 'CVE-２０２６-１２３４'):
+        response = client.post('/avg/add', data=default_group_dict(dict(pkgnames='foo', cve=issue_id)))
+        assert b'Invalid issue' in response.data
+        assert CVEGroup.query.count() == 0
+        assert CVE.query.count() == 0
     issue_id = 'CVE-4242-4242'
     resp = client.post(url_for('tracker.add_group'), follow_redirects=True,
                        data=default_group_dict(dict(pkgnames='foo', cve=issue_id)))
@@ -335,6 +340,13 @@ def test_add_group_fixed_version_older_then_affected(db, client):
     resp = client.post(url_for('tracker.add_group'), follow_redirects=True, data=data)
     assert 200 == resp.status_code
     assert 'Version must be newer.' in resp.data.decode()
+    for field in ('affected', 'fixed'):
+        data = default_group_dict(dict(pkgnames='foo', affected='1.0-1', fixed='2.0-1',
+                                       force_creation=True))
+        data[field] = '3' * 31 + '-1'
+        response = client.post('/avg/add', data=data)
+        assert b'longer than 32 characters' in response.data
+        assert CVEGroup.query.count() == 1
 
 
 @create_package(name='foo')
@@ -535,6 +547,14 @@ def test_edit_group_non_relational_field_updates_changed_date(db, client):
 
     group = CVEGroup.query.get(DEFAULT_GROUP_ID)
     assert group.changed > group_changed_old
+    for reference in ('ftp://example.org/legacy-advisory', 'git://git.kernel.org/source',
+                      'ssh://git@github.com/archlinux/example'):
+        group.reference = reference
+        db.session.commit()
+        data.update(changed=str(group.changed), reference=reference, notes='Keep the archived reference')
+        assert client.post(url_for('tracker.edit_group', avg=group.name), data=data).status_code == 302
+        assert group.reference == reference
+        assert group.notes == 'Keep the archived reference'
 
     Package.query.delete()
     group.status = Status.fixed

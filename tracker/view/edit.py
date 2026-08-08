@@ -163,8 +163,9 @@ def edit_cve(cve):
 
     concurrent_modification = str(cve.changed) != form.changed.data
 
-    if not form.validate_on_submit() or (concurrent_modification and not
-                                         (form.force_submit.data and str(cve.changed) == form.changed_latest.data)):
+    form_valid = form.validate_on_submit()
+    if not form_valid or (concurrent_modification and not
+                         (form.force_submit.data and str(cve.changed) == form.changed_latest.data)):
         if advisories:
             flash('WARNING: This is referenced by an already published advisory!', 'warning')
 
@@ -174,6 +175,10 @@ def edit_cve(cve):
             flash('WARNING: The remote data has changed!', 'warning')
             code = Conflict.code
 
+            form.force_submit.data = False
+            form.changed_latest.data = str(cve.changed)
+
+        if concurrent_modification and form_valid:
             issue = CVE()
             issue.id = form.cve.data
             issue.issue_type = form.issue_type.data
@@ -191,10 +196,6 @@ def edit_cve(cve):
             for field, value in form.cvss_values.items():
                 setattr(issue, field, value)
                 setattr(issue, field + '_mod', getattr(cve, field) != value)
-
-            if form.changed_latest.data != cve.changed:
-                form.force_submit.data = False
-            form.changed_latest.data = str(cve.changed)
 
             Transaction = versioning_manager.transaction_cls
             VersionClassCVE = version_class(CVE)

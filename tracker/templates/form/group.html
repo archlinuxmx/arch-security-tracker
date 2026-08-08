@@ -35,7 +35,8 @@
 						</div>
 					</div>
 					{{ render_field(form.reference, class='full size', maxlength=CVEGroup.REFERENCES_LENGTH, placeholder='Relevant external group references...', indent=5) }}
-					{{ render_field(form.notes, class='full size', maxlength=CVEGroup.NOTES_LENGTH, placeholder='Internal group side notes...', indent=5) }}
+					{{ render_field(form.notes, class='full size', maxlength=CVEGroup.NOTES_LENGTH, placeholder='Public group notes...', indent=5) }}
+					<p>Notes are public. Use the <a href="{{ url_for('tracker.review_intake') }}">review queue</a> for private evidence.</p>
 					<div class="row">
 						<div class="one-quarter column">
 							{{ render_checkbox(form.advisory_qualified, indent=7) }}

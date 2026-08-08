@@ -1,7 +1,8 @@
+from re import ASCII
+from re import fullmatch
 from re import match
 from re import search
 
-from wtforms.validators import URL as URLValidator
 from wtforms.validators import ValidationError
 
 from tracker import db
@@ -12,6 +13,7 @@ from tracker.model.advisory import advisory_regex
 from tracker.model.cve import cve_id_regex
 from tracker.model.cvegroup import pkgname_regex
 from tracker.util import multiline_to_list
+from tracker.util import valid_reference_url
 
 ERROR_ISSUE_ID_INVALID = u'Invalid issue.'
 ERROR_INVALID_URL = u'Invalid URL {}.'
@@ -37,18 +39,6 @@ class ValidAdvisoryReference(object):
         form.advisory_content = generate_advisory(advisory_id=form.advisory_id, with_subject=False, raw=True)
         if not form.advisory_content:
             raise ValidationError('A fixed version and CVEs are required to generate this advisory.')
-
-
-class ValidPackageName(object):
-    def __init__(self):
-        self.message = u'Unknown package.'
-
-    def __call__(self, form, field):
-        if not match(pkgname_regex, field.data):
-            self.fail(field.data)
-        versions = Package.query.filter(name=field.data).first()
-        if not versions:
-            raise ValidationError(self.message)
 
 
 class ValidPackageNames(object):
@@ -96,7 +86,7 @@ class ValidIssue(object):
         self.message = ERROR_ISSUE_ID_INVALID
 
     def __call__(self, form, field):
-        if not match(cve_id_regex, field.data):
+        if len(field.data) > 64 or not fullmatch(cve_id_regex, field.data, ASCII):
             raise ValidationError(self.message)
 
 
@@ -110,14 +100,13 @@ class ValidIssues(object):
     def __call__(self, form, field):
         issues = multiline_to_list(field.data)
         for issue in issues:
-            if not match(cve_id_regex, issue):
+            if len(issue) > 64 or not fullmatch(cve_id_regex, issue, ASCII):
                 self.fail(issue)
 
 
 class ValidURLs(object):
     def __init__(self):
         self.message = ERROR_INVALID_URL
-        self.regex = URLValidator().regex
 
     def fail(self, url):
         raise ValidationError(self.message.format(url))
@@ -125,5 +114,5 @@ class ValidURLs(object):
     def __call__(self, form, field):
         urls = multiline_to_list(field.data)
         for url in urls:
-            if not self.regex.match(url):
+            if not valid_reference_url(url, schemes=None):
                 self.fail(url)

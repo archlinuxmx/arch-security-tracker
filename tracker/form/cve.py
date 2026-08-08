@@ -26,7 +26,7 @@ class CVEForm(BaseForm):
     severity = SelectField(u'Severity', choices=[(e.name, e.label) for e in [*Severity]], validators=[DataRequired()])
     remote = SelectField(u'Remote', choices=[(e.name, e.label) for e in [*Remote]], validators=[DataRequired()])
     reference = TextAreaField(u'References', validators=[Optional(), Length(max=CVE.REFERENCES_LENGTH), ValidURLs()])
-    notes = TextAreaField(u'Notes', validators=[Optional(), Length(max=CVE.NOTES_LENGTH)])
+    notes = TextAreaField(u'Public notes', validators=[Optional(), Length(max=CVE.NOTES_LENGTH)])
     cvss_version = SelectField('CVSS version', choices=[('', 'None'), ('3.0', '3.0'), ('3.1', '3.1'), ('4.0', '4.0')], default='', validators=[Optional()])
     cvss_score = StringField('CVSS score', validators=[Optional(), Length(max=16)])
     cvss_vector = StringField('CVSS vector', validators=[Optional(), Length(max=256)])
