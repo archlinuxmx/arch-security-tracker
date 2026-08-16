@@ -3,9 +3,8 @@
 import re
 from decimal import Decimal
 from decimal import InvalidOperation
-from urllib.parse import urlsplit
 
-from wtforms.validators import URL
+from tracker.util import valid_reference_url
 
 
 def parse_cvss(value):
@@ -30,17 +29,7 @@ def parse_cvss(value):
             or not re.fullmatch(r'CVSS:' + re.escape(version) + r'(?:/[A-Z][A-Z0-9]*:[A-Za-z0-9]+)+', vector)):
         raise ValueError('CVSS vector must have the matching version prefix and metric:value syntax.')
     source = value['source']
-    try:
-        parsed = urlsplit(source) if isinstance(source, str) else None
-        valid_source = (parsed is not None and len(source) <= 2048
-                        and not any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in source)
-                        and parsed.scheme in ('http', 'https') and parsed.hostname
-                        and (parsed.port is None or parsed.port <= 65535) and URL().regex.fullmatch(source))
-        if valid_source:
-            source.encode('utf-8')
-    except ValueError:
-        valid_source = False
-    if not valid_source:
+    if not valid_reference_url(source) or len(source) > 2048:
         raise ValueError('CVSS source must be an HTTP(S) reference URL.')
     return dict(cvss_version=version, cvss_score=score, cvss_vector=vector, cvss_source=source)
 

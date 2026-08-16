@@ -19,6 +19,7 @@ ERROR_ISSUE_ID_INVALID = u'Invalid issue.'
 ERROR_INVALID_URL = u'Invalid URL {}.'
 
 
+
 class ValidAdvisoryReference(object):
     def __call__(self, form, field):
         if not field.data or field.data == getattr(form, 'original_reference', None):

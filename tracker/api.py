@@ -6,7 +6,6 @@ from collections import defaultdict
 from datetime import datetime
 from functools import wraps
 from hashlib import sha256
-from urllib.parse import urlsplit
 
 from flask import Blueprint
 from flask import current_app
@@ -19,7 +18,6 @@ from sqlalchemy.exc import IntegrityError
 from werkzeug.exceptions import BadRequest
 from werkzeug.exceptions import HTTPException
 from werkzeug.exceptions import NotFound
-from wtforms.validators import URL
 
 from tracker import db
 from tracker.cvss import cvss_json
@@ -32,6 +30,7 @@ from tracker.model.cve import cve_id_regex
 from tracker.model.cve import issue_types
 from tracker.model.enum import Remote
 from tracker.model.enum import Severity
+from tracker.util import valid_reference_url
 
 api = Blueprint('api_v1', __name__, url_prefix='/api/v1')
 MAX_BODY_BYTES = 64 * 1024
@@ -247,6 +246,26 @@ def valid_text(value, max_length):
     return True
 
 
+def validate_content(data, fields):
+    """Validate shared public text and collect errors in fields."""
+    for name, length in [('description', CVE.DESCRIPTION_LENGTH), ('notes', CVE.NOTES_LENGTH)]:
+        value = data.get(name, '')
+        if not valid_text(value, length):
+            fields[name] = ['Must be valid Unicode text of at most {} characters.'.format(length)]
+    references = data.get('references', [])
+    if not isinstance(references, list) or any(not isinstance(ref, str) for ref in references):
+        fields['references'] = ['Must be an array of HTTP(S) URL strings.']
+    else:
+        if any(not valid_text(ref, CVE.REFERENCES_LENGTH) or not valid_reference_url(ref)
+               for ref in references):
+            fields['references'] = ['Every reference must be an HTTP(S) URL without whitespace.']
+        references = list(dict.fromkeys(references))
+        if len('\n'.join(references)) > CVE.REFERENCES_LENGTH:
+            fields['references'] = ['Joined references must not exceed {} characters.'.format(CVE.REFERENCES_LENGTH)]
+    return dict(description=data.get('description', ''), notes=data.get('notes', ''),
+                reference='\n'.join(references) if 'references' not in fields else '')
+
+
 def validate_cve(data):
     fields = {}
     allowed = {'name', 'type', 'severity', 'vector', 'description', 'references', 'notes', 'cvss'}
@@ -264,36 +283,12 @@ def validate_cve(data):
         value = data.get(name, 'unknown')
         if not isinstance(value, str) or value not in choices:
             fields[name] = ['Must be one of: {}.'.format(', '.join(choices))]
-    for name, length in [('description', CVE.DESCRIPTION_LENGTH), ('notes', CVE.NOTES_LENGTH)]:
-        value = data.get(name, '')
-        if not valid_text(value, length):
-            fields[name] = ['Must be valid Unicode text of at most {} characters.'.format(length)]
-    references = data.get('references', [])
-    if not isinstance(references, list) or any(not isinstance(ref, str) for ref in references):
-        fields['references'] = ['Must be an array of HTTP(S) URL strings.']
-    else:
-        url_pattern = URL().regex
-        for ref in references:
-            try:
-                parsed = urlsplit(ref)
-                valid = (valid_text(ref, CVE.REFERENCES_LENGTH)
-                         and not any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in ref)
-                         and parsed.scheme in ('http', 'https') and parsed.hostname
-                         and (parsed.port is None or parsed.port <= 65535) and url_pattern.fullmatch(ref))
-            except ValueError:
-                valid = False
-            if not valid:
-                fields['references'] = ['Every reference must be an HTTP(S) URL without whitespace.']
-                break
-        references = list(dict.fromkeys(references))
-        if len('\n'.join(references)) > CVE.REFERENCES_LENGTH:
-            fields['references'] = ['Joined references must not exceed {} characters.'.format(CVE.REFERENCES_LENGTH)]
+    content = validate_content(data, fields)
     if fields:
         raise APIError(422, 'validation_error', 'Invalid CVE fields.', fields)
     return dict(id=data['name'], issue_type=data.get('type', 'unknown'),
                 severity=Severity[data.get('severity', 'unknown')],
-                remote=Remote[data.get('vector', 'unknown')], description=data.get('description', ''),
-                reference='\n'.join(references), notes=data.get('notes', ''), **cvss)
+                remote=Remote[data.get('vector', 'unknown')], **content, **cvss)
 
 
 @api.route('/cves', methods=['POST'])

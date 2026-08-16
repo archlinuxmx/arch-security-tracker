@@ -36,7 +36,6 @@ def valid_reference_url(value, schemes=('http', 'https')):
         return False
 
 
-
 def page_number(value, per_page):
     try:
         page = int(value)

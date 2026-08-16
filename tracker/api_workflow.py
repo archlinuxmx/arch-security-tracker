@@ -19,6 +19,7 @@ from tracker.api import error_response
 from tracker.api import read_json
 from tracker.api import serialize_cves
 from tracker.api import token_required
+from tracker.api import validate_content
 from tracker.api import validate_cve
 from tracker.model import CVE
 from tracker.model import Advisory
@@ -171,10 +172,9 @@ def validate_group(data, group=None):
     bug_ticket = data.get('bug_ticket', '')
     if not valid_text(bug_ticket, CVEGroup.BUG_TICKET_LENGTH) or (bug_ticket and not valid_bug_ticket(bug_ticket)):
         fields['bug_ticket'] = ['Use an Arch GitLab issue URL.']
+    content = validate_content(data, fields)
     if fields:
         raise APIError(422, 'validation_error', 'Invalid group fields.', fields)
-    values = validate_cve({'name': 'CVE-2000-0000', 'references': data.get('references', []),
-                           'notes': data.get('notes', '')})
     packages = list(dict.fromkeys(data['packages']))
     known = Package.query.filter(Package.name.in_(packages)).all()
     existing = set(package.pkgname for package in group.packages) if group else set()
@@ -185,7 +185,7 @@ def validate_group(data, group=None):
         raise APIError(422, 'validation_error', 'All packages must share the same package base.')
     return dict(cves=list(dict.fromkeys(data['cves'])), packages=packages, affected=affected, fixed=fixed,
                 assessment=Affected[data.get('assessment', 'unknown')], bug_ticket=bug_ticket,
-                reference=values['reference'], notes=values['notes'],
+                reference=content['reference'], notes=content['notes'],
                 advisory_qualified=data.get('advisory_qualified', True))
 
 

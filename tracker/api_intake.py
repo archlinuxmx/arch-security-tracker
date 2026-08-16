@@ -17,7 +17,7 @@ from tracker.api import read_json
 from tracker.api import token_required
 from tracker.api import valid_name
 from tracker.api import valid_text
-from tracker.api import validate_cve
+from tracker.api import validate_content
 from tracker.model.review import IntakeCandidate
 from tracker.model.review import ReviewEvent
 
@@ -33,11 +33,9 @@ def intake_values(data):
     cve_name = data.get('cve_name')
     if cve_name is not None and not valid_name(cve_name):
         fields['cve_name'] = ['Must be a CVE identifier or null.']
+    public = validate_content(data, fields)
     if fields:
         raise APIError(422, 'validation_error', 'Invalid intake fields.', fields)
-    public = validate_cve({'name': cve_name or 'CVE-2000-0000',
-                           'description': data.get('description', ''),
-                           'references': data.get('references', [])})
     return dict(title=data['title'].strip(), source=data['source'].strip(), cve_name=cve_name,
                 evidence=data.get('evidence', ''), description=public['description'], reference=public['reference'])
 
