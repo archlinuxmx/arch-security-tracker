@@ -49,7 +49,7 @@ class GroupForm(BaseForm):
             raise ValidationError('Use an Arch GitLab issue URL.')
 
     def validate(self, **kwargs):
-        rv = BaseForm.validate(self, kwargs)
+        rv = super().validate(**kwargs)
         if not rv:
             return False
         if self.fixed.data and 0 <= vercmp(self.affected.data, self.fixed.data):

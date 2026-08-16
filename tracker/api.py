@@ -6,7 +6,6 @@ from collections import defaultdict
 from datetime import datetime
 from functools import wraps
 from hashlib import sha256
-from urllib.parse import urlsplit
 
 from flask import Blueprint
 from flask import current_app
@@ -19,7 +18,6 @@ from sqlalchemy.exc import IntegrityError
 from werkzeug.exceptions import BadRequest
 from werkzeug.exceptions import HTTPException
 from werkzeug.exceptions import NotFound
-from wtforms.validators import URL
 
 from tracker import db
 from tracker.cvss import cvss_json
@@ -32,6 +30,7 @@ from tracker.model.cve import cve_id_regex
 from tracker.model.cve import issue_types
 from tracker.model.enum import Remote
 from tracker.model.enum import Severity
+from tracker.util import valid_reference_url
 
 api = Blueprint('api_v1', __name__, url_prefix='/api/v1')
 MAX_BODY_BYTES = 64 * 1024
@@ -262,19 +261,9 @@ def validate_content(data, fields):
     if not isinstance(references, list) or any(not isinstance(ref, str) for ref in references):
         fields['references'] = ['Must be an array of HTTP(S) URL strings.']
     else:
-        url_pattern = URL().regex
-        for ref in references:
-            try:
-                parsed = urlsplit(ref)
-                valid = (valid_text(ref, CVE.REFERENCES_LENGTH)
-                         and not any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in ref)
-                         and parsed.scheme in ('http', 'https') and parsed.hostname
-                         and (parsed.port is None or parsed.port <= 65535) and url_pattern.fullmatch(ref))
-            except ValueError:
-                valid = False
-            if not valid:
-                fields['references'] = ['Every reference must be an HTTP(S) URL without whitespace.']
-                break
+        if any(not valid_text(ref, CVE.REFERENCES_LENGTH) or not valid_reference_url(ref)
+               for ref in references):
+            fields['references'] = ['Every reference must be an HTTP(S) URL without whitespace.']
         references = list(dict.fromkeys(references))
         if len('\n'.join(references)) > CVE.REFERENCES_LENGTH:
             fields['references'] = ['Joined references must not exceed {} characters.'.format(CVE.REFERENCES_LENGTH)]
