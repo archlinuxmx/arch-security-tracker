@@ -610,6 +610,18 @@ def test_edit_group_relational_field_packages_updates_changed_date(db, client):
         assert b'Keep this input' in response.data
         assert {package.pkgname for package in group.packages} == {'foopkg', 'foopkg2'}
         assert group.notes == ''
+    Package.query.filter_by(name='foopkg2').one().base = 'split-base'
+    db.session.commit()
+    data.update(pkgnames='foopkg foopkg2', changed=str(group.changed), notes='Keep historical membership')
+    assert client.post('/{}/edit'.format(group.name), data=data).status_code == 302
+    assert group.notes == 'Keep historical membership'
+    data.update(pkgnames='foopkg', changed=str(group.changed))
+    assert client.post('/{}/edit'.format(group.name), data=data).status_code == 302
+    assert {package.pkgname for package in group.packages} == {'foopkg'}
+    data.update(pkgnames='foopkg foopkg2', changed=str(group.changed))
+    response = client.post('/{}/edit'.format(group.name), data=data)
+    assert b'Mismatching pkgbases' in response.data
+    assert {package.pkgname for package in group.packages} == {'foopkg'}
 
 
 @create_package(name='foopkg', version='1.2.3-4')

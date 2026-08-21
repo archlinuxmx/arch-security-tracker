@@ -8,6 +8,7 @@ from flask import jsonify
 from flask import request
 from flask import url_for
 from pyalpm import vercmp
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 from werkzeug.exceptions import NotFound
@@ -153,7 +154,7 @@ def validate_group(data, group=None):
     missing = set(packages) - {package.name for package in known} - existing
     if missing:
         raise APIError(422, 'validation_error', 'Unknown packages: {}.'.format(', '.join(sorted(missing))))
-    if len(set(package.base for package in known)) > 1:
+    if (group is None or set(packages) - existing) and len(set(package.base for package in known)) > 1:
         raise APIError(422, 'validation_error', 'All packages must share the same package base.')
     return dict(cves=list(dict.fromkeys(data['cves'])), packages=packages, affected=affected, fixed=fixed,
                 assessment=Affected[data.get('assessment', 'unknown')], bug_ticket=bug_ticket,
@@ -165,7 +166,13 @@ def check_group_overlap(values, group=None):
     overlap = (CVEGroup.query.join(CVEGroupEntry).join(CVEGroupPackage)
                .filter(CVEGroupEntry.cve_id.in_(values['cves']), CVEGroupPackage.pkgname.in_(values['packages'])))
     if group:
-        overlap = overlap.filter(CVEGroup.id != group.id)
+        added_cves = set(values['cves']) - {entry.cve_id for entry in group.issues}
+        added_packages = set(values['packages']) - {package.pkgname for package in group.packages}
+        if not added_cves and not added_packages:
+            return
+        overlap = overlap.filter(CVEGroup.id != group.id,
+                                 or_(CVEGroupEntry.cve_id.in_(added_cves),
+                                     CVEGroupPackage.pkgname.in_(added_packages)))
     existing = overlap.first()
     if existing:
         raise APIError(409, 'already_grouped', 'A package/CVE association already exists in {}.'.format(existing.name))

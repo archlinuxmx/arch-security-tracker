@@ -104,7 +104,10 @@ def test_create_group_requires_explicit_assessment_and_detects_overlap(db, clien
     assert CVEGroup.query.count() == 1
     assert CVE.query.get('CVE-2026-9999') is None
     data['bug_ticket'] = ''
-    assert client.post('/api/v1/groups', json=data, headers=headers).get_json()['status'] == 'fixed'
+    response = client.post('/api/v1/groups', json=data, headers=headers,
+                           environ_overrides={'SCRIPT_NAME': '/tracker'})
+    assert response.get_json()['status'] == 'fixed'
+    assert response.headers['Location'] == '/tracker/api/v1/groups/' + response.get_json()['name']
 
 
 @create_package(name='foo', version='2.0-1')
@@ -192,6 +195,38 @@ def test_group_update_validates_versions_and_keeps_relationships(db, client, wor
     assert response.status_code == 200
     assert response.get_json()['status'] == 'not_affected'
     assert response.get_json()['advisory_qualified'] is False
+
+
+@create_package(name='foo', version='2.0-1')
+@create_package(name='foo-doc', base='foo', version='2.0-1')
+@create_package(name='other', base='other', version='2.0-1')
+@create_issue
+@create_issue(id='CVE-2026-10001')
+@create_group(id=1, packages=['foo', 'foo-doc'])
+@create_group(id=2, packages=['foo'])
+@create_group(id=3, packages=['foo'], issues=['CVE-2026-10001'])
+def test_group_edits_preserve_existing_associations_after_catalogue_changes(db, client, workflow_tokens):
+    path = '/api/v1/groups/AVG-1'
+    headers = match(client, path, workflow_tokens['groups:update'])
+    response = client.patch(path, json={'notes': 'Existing overlap retained'}, headers=headers)
+    assert response.status_code == 200
+
+    Package.query.filter_by(name='foo-doc').one().base = 'separate-base'
+    db.session.commit()
+    headers = match(client, path, workflow_tokens['groups:update'])
+    response = client.patch(path, json={'notes': 'Package base changed upstream'}, headers=headers)
+    assert response.status_code == 200
+    assert response.get_json()['packages'] == ['foo', 'foo-doc']
+
+    headers = match(client, path, workflow_tokens['groups:update'])
+    response = client.patch(path, json={'cves': [DEFAULT_ISSUE_ID, 'CVE-2026-10001']}, headers=headers)
+    assert response.status_code == 409
+    assert response.get_json()['error']['code'] == 'already_grouped'
+    assert CVEGroup.query.filter_by(id=1).one().issues[0].cve_id == DEFAULT_ISSUE_ID
+    response = client.patch(path, json={'packages': ['foo', 'other']}, headers=headers)
+    assert response.status_code == 422
+    response = client.patch(path, json={'packages': ['foo']}, headers=headers)
+    assert response.status_code == 200
 
 
 @create_package(name='foo', version='2.0-1')
