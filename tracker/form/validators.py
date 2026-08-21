@@ -74,6 +74,8 @@ class SamePackageBase(object):
 
     def __call__(self, form, field):
         pkgnames = set(multiline_to_list(field.data))
+        if pkgnames <= set(getattr(form, 'packages', ())):
+            return
         pkgbases = db.session.query(Package) \
             .filter(Package.name.in_(pkgnames)) \
             .group_by(Package.base).all()

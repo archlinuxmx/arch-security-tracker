@@ -2,35 +2,52 @@
 
 from datetime import datetime
 from hashlib import sha256
+from re import fullmatch
 
 from flask import g
 from flask import jsonify
 from flask import request
+from flask import url_for
+from pyalpm import vercmp
 from sqlalchemy import event
+from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 from werkzeug.exceptions import NotFound
 
 from tracker import db
 from tracker import tracker
+from tracker.advisory import advisory_get_date_label
+from tracker.advisory import advisory_get_label
 from tracker.api import APIError
 from tracker.api import api
 from tracker.api import error_response
 from tracker.api import read_json
 from tracker.api import serialize_cves
 from tracker.api import token_required
+from tracker.api import valid_name
+from tracker.api import valid_text
 from tracker.api import validate_content
 from tracker.api import validate_cve
+from tracker.api_catalog import serialize_group
 from tracker.model import CVE
 from tracker.model import Advisory
 from tracker.model import CVEGroup
 from tracker.model import CVEGroupEntry
 from tracker.model import CVEGroupPackage
+from tracker.model import Package
 from tracker.model.advisory import advisory_types
+from tracker.model.cvegroup import pkgname_regex
+from tracker.model.cvegroup import pkgver_regex
+from tracker.model.cvegroup import valid_bug_ticket
+from tracker.model.enum import Affected
 from tracker.model.enum import Publication
 from tracker.model.enum import Status
 from tracker.model.enum import group_status
 from tracker.model.enum import highest_severity
+from tracker.model.user import User
+from tracker.view.error import handle_error
 
 
 @event.listens_for(Session, 'before_flush')
@@ -80,11 +97,13 @@ def group_advisories(group):
 def refresh_group(group, update_type=True):
     issues = [entry.cve for entry in group.issues]
     group.severity = highest_severity([cve.severity for cve in issues])
+    if not update_type:
+        return
     types = set(cve.issue_type for cve in issues)
     issue_type = next(iter(types)) if len(types) == 1 else 'multiple issues'
     if issue_type not in advisory_types:
         issue_type = 'multiple issues'
-    for advisory in group_advisories(group) if update_type else []:
+    for advisory in group_advisories(group):
         if advisory.publication == Publication.scheduled:
             advisory.advisory_type = issue_type
 
@@ -97,7 +116,6 @@ def concurrent_write(error):
 
 @tracker.errorhandler(StaleDataError)
 def concurrent_browser_write(error):
-    from tracker.view.error import handle_error
     db.session.rollback()
     return handle_error('The record changed. Reload it and review your changes again.', 409)
 
@@ -119,10 +137,12 @@ def update_cve(name):
     columns = {'type': 'issue_type', 'severity': 'severity', 'vector': 'remote',
                'description': 'description', 'references': 'reference', 'notes': 'notes'}
     old_type = cve.issue_type
-    for field in data:
-        keys = ('cvss_version', 'cvss_score', 'cvss_vector', 'cvss_source') if field == 'cvss' else (columns[field],)
-        for key in keys:
-            setattr(cve, key, values[key])
+    for field, column in columns.items():
+        if field in data:
+            setattr(cve, column, values[column])
+    if 'cvss' in data:
+        for column in ('cvss_version', 'cvss_score', 'cvss_vector', 'cvss_source'):
+            setattr(cve, column, values[column])
     for group in groups:
         refresh_group(group, update_type=old_type != cve.issue_type)
     db.session.commit()
@@ -130,18 +150,6 @@ def update_cve(name):
 
 
 def validate_group(data, group=None):
-    from re import fullmatch
-
-    from pyalpm import vercmp
-
-    from tracker.api import valid_name
-    from tracker.api import valid_text
-    from tracker.model import Package
-    from tracker.model.cvegroup import pkgname_regex
-    from tracker.model.cvegroup import pkgver_regex
-    from tracker.model.cvegroup import valid_bug_ticket
-    from tracker.model.enum import Affected
-
     allowed = {'cves', 'packages', 'affected', 'fixed', 'assessment', 'bug_ticket',
                'references', 'notes', 'advisory_qualified'}
     if set(data) - allowed:
@@ -181,7 +189,7 @@ def validate_group(data, group=None):
     missing = set(packages) - {package.name for package in known} - existing
     if missing:
         raise APIError(422, 'validation_error', 'Unknown packages: {}.'.format(', '.join(sorted(missing))))
-    if len(set(package.base for package in known)) > 1:
+    if (group is None or set(packages) - existing) and len(set(package.base for package in known)) > 1:
         raise APIError(422, 'validation_error', 'All packages must share the same package base.')
     return dict(cves=list(dict.fromkeys(data['cves'])), packages=packages, affected=affected, fixed=fixed,
                 assessment=Affected[data.get('assessment', 'unknown')], bug_ticket=bug_ticket,
@@ -193,7 +201,13 @@ def check_group_overlap(values, group=None):
     overlap = (CVEGroup.query.join(CVEGroupEntry).join(CVEGroupPackage)
                .filter(CVEGroupEntry.cve_id.in_(values['cves']), CVEGroupPackage.pkgname.in_(values['packages'])))
     if group:
-        overlap = overlap.filter(CVEGroup.id != group.id)
+        added_cves = set(values['cves']) - {entry.cve_id for entry in group.issues}
+        added_packages = set(values['packages']) - {package.pkgname for package in group.packages}
+        if not added_cves and not added_packages:
+            return
+        overlap = overlap.filter(CVEGroup.id != group.id,
+                                 or_(CVEGroupEntry.cve_id.in_(added_cves),
+                                     CVEGroupPackage.pkgname.in_(added_packages)))
     existing = overlap.first()
     if existing:
         raise APIError(409, 'already_grouped', 'A package/CVE association already exists in {}.'.format(existing.name))
@@ -233,9 +247,6 @@ def apply_group(group, values):
 @api.route('/groups', methods=['POST'])
 @token_required(scope='groups:create')
 def create_group():
-    from tracker.api_catalog import serialize_group
-    from tracker.model.user import User
-
     data = read_json()
     # Acquire the SQLite write lock before duplicate checks. No user data changes.
     write_lock(User, g.api_user.id)
@@ -247,17 +258,13 @@ def create_group():
         apply_group(group, values)
     db.session.commit()
     response = record_response(serialize_group(group), 201)
-    response.headers['Location'] = '/api/v1/groups/' + group.name
+    response.headers['Location'] = url_for('api_v1.get_group', name=group.name)
     return response
 
 
 @api.route('/groups/<name>', methods=['PATCH'])
 @token_required(scope='groups:update')
 def update_group(name):
-    from re import fullmatch
-
-    from tracker.api_catalog import serialize_group
-
     if not fullmatch(r'AVG-[0-9]{1,18}', name):
         raise NotFound('Group not found.')
     data = read_json()
@@ -308,8 +315,6 @@ def get_draft(name, locked=False):
 @api.route('/groups/<name>/advisory-drafts', methods=['GET'])
 @token_required(scope='advisories:write')
 def list_advisory_drafts(name):
-    from re import fullmatch
-
     if not fullmatch(r'AVG-[0-9]{1,18}', name):
         raise NotFound('Group not found.')
     group = CVEGroup.query.filter_by(id=int(name[4:])).first()
@@ -324,14 +329,6 @@ def list_advisory_drafts(name):
 @api.route('/groups/<name>/advisory-drafts', methods=['POST'])
 @token_required(scope='advisories:write')
 def create_advisory_drafts(name):
-    from re import fullmatch
-
-    from sqlalchemy.exc import IntegrityError
-
-    from tracker.advisory import advisory_get_date_label
-    from tracker.advisory import advisory_get_label
-    from tracker.model.enum import Status
-
     if not fullmatch(r'AVG-[0-9]{1,18}', name):
         raise NotFound('Group not found.')
     data = read_json()
@@ -376,8 +373,6 @@ def read_advisory_draft(name):
 @api.route('/advisory-drafts/<name>', methods=['PATCH'])
 @token_required(scope='advisories:write')
 def update_advisory_draft(name):
-    from tracker.api import valid_text
-
     data = read_json()
     if not data or set(data) - {'type', 'workaround', 'impact'}:
         raise APIError(422, 'validation_error', 'Supply type, workaround, or impact; publication is not writable.')
