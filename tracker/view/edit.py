@@ -14,6 +14,7 @@ from werkzeug.exceptions import Conflict
 from tracker import db
 from tracker import tracker
 from tracker.advisory import advisory_fetch_reference_url_from_mailman
+from tracker.advisory import generate_advisory
 from tracker.form import CVEForm
 from tracker.form import GroupForm
 from tracker.form.advisory import AdvisoryEditForm
@@ -113,8 +114,9 @@ def edit_advisory(advisory_id):
 
     advisory.impact = form.impact.data or None
     advisory.workaround = form.workaround.data or None
-    if advisory.reference != form.reference.data:
-        advisory.content = form.advisory_content
+    if advisory.publication == Publication.scheduled or advisory.reference != form.reference.data:
+        advisory.content = (generate_advisory(advisory.id, with_subject=False, raw=True)
+                            if form.reference.data else None)
     advisory.reference = form.reference.data or None
 
     # update changed date on modification

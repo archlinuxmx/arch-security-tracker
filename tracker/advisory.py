@@ -1,5 +1,5 @@
 from datetime import datetime
-from html import unescape
+from itertools import zip_longest
 from os.path import join
 from re import IGNORECASE
 from re import escape
@@ -13,6 +13,7 @@ from flask import render_template
 from markupsafe import escape as html_escape
 from requests import Session
 from requests.exceptions import RequestException
+from sqlalchemy_continuum import version_class
 
 from config import TRACKER_ADVISORY_URL
 from config import TRACKER_BUGTRACKER_URL
@@ -66,9 +67,8 @@ def generate_advisory(advisory_id, with_subject=True, raw=True):
         return None
     package = entries[0][2]
     issues = sorted([issue for (advisory, group, package, issue) in entries])
-    severity_sorted_issues = sorted(issues, key=lambda issue: issue.issue_type or 'unknown')
-    severity_sorted_issues = sorted(severity_sorted_issues, key=lambda issue: issue.severity)
-    remote = any([issue.remote is Remote.remote for issue in issues])
+    severity_sorted_issues = sorted(issues, key=lambda issue: (issue.severity, issue.issue_type or 'unknown'))
+    remote = any(issue.remote is Remote.remote for issue in issues)
     issue_listing_formatted = advisory_format_issue_listing([issue.id for issue in issues])
 
     link = TRACKER_ADVISORY_URL.format(advisory.id, group.id)
@@ -86,10 +86,10 @@ def generate_advisory(advisory_id, with_subject=True, raw=True):
     if group.bug_ticket:
         ticket = str(group.bug_ticket)
         references.append(ticket if ticket.startswith('https://') else TRACKER_BUGTRACKER_URL.format(ticket))
-    references.extend([ref for ref in multiline_to_list(group.reference)
-                       if ref not in references])
-    list(map(lambda issue: references.extend(
-        [ref for ref in multiline_to_list(issue.reference) if ref not in references]), issues))
+    for record in [group, *issues]:
+        for reference in multiline_to_list(record.reference):
+            if reference not in references:
+                references.append(reference)
 
     raw_asa = render_template('advisory.txt',
                               advisory=advisory,
@@ -239,25 +239,21 @@ def advisory_get_label(date_label=None, number=1):
     return 'ASA-{}-{}'.format(date_label, number)
 
 
+def advisory_get_last_number(date_label):
+    """Include retired identifiers while the caller holds the write lock."""
+    history = version_class(Advisory)
+    prefix = 'ASA-{}-'.format(date_label)
+    identifiers = (db.session.query(Advisory.id).filter(Advisory.id.startswith(prefix))
+                   .union(db.session.query(history.id).filter(history.id.startswith(prefix))))
+    return max((int(identifier.rsplit('-', 1)[1]) for identifier, in identifiers), default=0)
+
+
 def advisory_format_issue_listing(issues, columns=4, rjust_left=len('CVE-ID  : ')):
-    # split sorted issues into chunks
-    issue_chunks = list(chunks(sorted(issues, key=issue_to_numeric), columns))
-    # insert padding to make last chunk have uniform size
-    issue_chunks[-1].extend([None] * (len(issue_chunks[0]) - len(issue_chunks[-1])))
-    # zip all row chunks to columns
-    issue_columns = list(zip(*issue_chunks))
-    # calc max length of each column
-    issue_column_length = list(map(lambda column: max(map(len, filter(lambda e: e, column))),
-                                   issue_columns))
-    # ljust elements per column to longest element
-    issue_columns = [[element.ljust(issue_column_length[index])
-                     if element and index < len(issue_column_length) - 1
-                     else element
-                     for element in chunk]
-                     for index, chunk in enumerate(issue_columns)]
-    # zip all column chunks to rows
-    issue_chunks = zip(*issue_columns)
-    # filter out empty padding elements
-    issue_chunks = map(lambda column: filter(lambda e: e, column), issue_chunks)
-    # join each row into an own line and rjust left sides
-    return '\n{}'.format(' ' * rjust_left).join(list(map(' '.join, issue_chunks)))
+    rows = list(chunks(sorted(issues, key=issue_to_numeric), columns))
+    widths = [max(len(issue) for issue in column) for column in zip_longest(*rows, fillvalue='')]
+    lines = []
+    for row in rows:
+        cells = [issue.ljust(widths[index]) if index < len(widths) - 1 else issue
+                 for index, issue in enumerate(row)]
+        lines.append(' '.join(cells))
+    return ('\n' + ' ' * rjust_left).join(lines)

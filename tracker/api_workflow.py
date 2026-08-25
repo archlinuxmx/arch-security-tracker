@@ -20,6 +20,7 @@ from tracker import db
 from tracker import tracker
 from tracker.advisory import advisory_get_date_label
 from tracker.advisory import advisory_get_label
+from tracker.advisory import advisory_get_last_number
 from tracker.api import APIError
 from tracker.api import api
 from tracker.api import error_response
@@ -344,9 +345,7 @@ def create_advisory_drafts(name):
     if default_type not in advisory_types:
         default_type = 'multiple issues'
     label = advisory_get_date_label()
-    prefix = 'ASA-{}-'.format(label)
-    existing = Advisory.query.filter(Advisory.id.startswith(prefix)).all()
-    number = max([int(advisory.id.rsplit('-', 1)[1]) for advisory in existing] or [0])
+    number = advisory_get_last_number(label)
     drafts = []
     for package in sorted(group.packages, key=lambda package: package.pkgname):
         number += 1

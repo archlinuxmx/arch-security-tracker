@@ -15,6 +15,7 @@ from tracker import tracker
 from tracker.advisory import advisory_fetch_reference_url_from_mailman
 from tracker.advisory import advisory_get_date_label
 from tracker.advisory import advisory_get_label
+from tracker.advisory import advisory_get_last_number
 from tracker.advisory import can_view_advisory
 from tracker.form.advisory import AdvisoryForm
 from tracker.form.advisory import AdvisoryPublishForm
@@ -176,9 +177,7 @@ def schedule_advisory(avg):
         return redirect('/{}'.format(avg))
 
     last_advisory_date = advisory_get_date_label()
-    prefix = 'ASA-{}-'.format(last_advisory_date)
-    existing = Advisory.query.filter(Advisory.id.startswith(prefix)).all()
-    last_advisory_num = max([int(advisory.id.rsplit('-', 1)[1]) for advisory in existing] or [0])
+    last_advisory_num = advisory_get_last_number(last_advisory_date)
 
     for pkg in sorted(pkgs, key=lambda package: package.pkgname):
         last_advisory_num += 1
@@ -218,8 +217,7 @@ def publish_advisory(asa):
                                Advisory=Advisory,
                                form=form)
 
-    if advisory.reference != form.reference.data:
-        advisory.content = form.advisory_content
+    advisory.content = form.advisory_content
     advisory.reference = form.reference.data
     advisory.publication = Publication.published
     db.session.commit()
