@@ -529,7 +529,7 @@ def show_advisory(advisory_id, raw=False):
     package = entries[0][2]
     issues = [issue for (advisory, group, package, issue) in entries]
 
-    if not advisory.content:
+    if advisory.publication == Publication.scheduled or not advisory.content:
         if raw:
             return redirect('/{}/generate/raw'.format(advisory_id))
         return redirect('/{}/generate'.format(advisory_id))

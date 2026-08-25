@@ -216,8 +216,7 @@ def publish_advisory(asa):
                                Advisory=Advisory,
                                form=form)
 
-    if advisory.reference != form.reference.data:
-        advisory.content = form.advisory_content
+    advisory.content = form.advisory_content
     advisory.reference = form.reference.data
     advisory.publication = Publication.published
     db.session.commit()

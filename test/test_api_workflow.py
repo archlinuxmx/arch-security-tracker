@@ -1,5 +1,6 @@
 import pytest
 
+from tracker.advisory import advisory_get_label
 from tracker.advisory import generate_advisory
 from tracker.model import CVE
 from tracker.model import Advisory
@@ -243,6 +244,10 @@ def test_advisory_drafts_generate_content_without_publishing(db, client, workflo
     for name in ('AVG-2', 'AVG-' + '9' * 19, 'invalid'):
         assert client.get('/api/v1/groups/' + name + '/advisory-drafts', headers=headers).status_code == 404
     CVE.query.filter_by(id=DEFAULT_ISSUE_ID).one().issue_type = None
+    retired = Advisory(id=advisory_get_label(number=10), group_package=CVEGroup.query.one().packages[0])
+    db.session.add(retired)
+    db.session.commit()
+    db.session.delete(retired)
     db.session.commit()
 
     def failed_render(*args, **kwargs):
@@ -260,6 +265,7 @@ def test_advisory_drafts_generate_content_without_publishing(db, client, workflo
     assert listing.get_json() == response.get_json()
     assert 'no-store' in listing.headers['Cache-Control']
     record = response.get_json()['items'][0]
+    assert record['name'] == advisory_get_label(number=11)
     assert record['publication'] == 'scheduled'
     assert 'The issue description' in record['content']
     assert '{} (unknown)'.format(DEFAULT_ISSUE_ID) in record['content']

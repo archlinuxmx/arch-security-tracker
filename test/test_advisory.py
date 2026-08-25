@@ -8,6 +8,7 @@ from xml.etree import ElementTree
 from flask import url_for
 from markupsafe import escape
 from pytest import mark
+from requests.exceptions import Timeout
 from werkzeug.exceptions import Forbidden
 from werkzeug.exceptions import NotFound
 
@@ -106,6 +107,15 @@ def test_schedule_advisory(db, client):
     assert resp.status_code == 302
     assert_advisory_data(advisory_get_label(number=3), group_id=group_id)
     assert 3 == advisory_count()
+
+    retired = advisory_get_label(number=3)
+    assert client.post('/' + retired + '/delete', data={'confirm': True}).status_code == 302
+    assert get_advisory(retired) is None
+    resp = client.post(url_for('tracker.schedule_advisory', avg=groups[1].name),
+                       data={'advisory_type': issue_types[1]})
+    assert resp.status_code == 302
+    assert_advisory_data(advisory_get_label(number=4), group_id=group_id)
+    assert get_advisory(retired) is None
 
 
 @create_package(name='foo', version='1.2.3-4')
@@ -264,7 +274,7 @@ def test_cant_schedule_already_existing_advisory(db, client):
 @create_group(id=DEFAULT_GROUP_ID, packages=['foo'], affected='1.2.3-3', fixed='1.2.3-4')
 @create_advisory(id=DEFAULT_ADVISORY_ID, group_package_id=DEFAULT_GROUP_ID, advisory_type=issue_types[1])
 @logged_in
-def test_edit_advisory(db, client):
+def test_edit_advisory(db, client, patch_get):
     workaround = 'the cake is a lie'
     impact = 'Big shit and deep trouble!'
     resp = client.post(url_for('tracker.edit_advisory', advisory_id=DEFAULT_ADVISORY_ID), follow_redirects=True,
@@ -273,6 +283,27 @@ def test_edit_advisory(db, client):
     assert 'text/html; charset=utf-8' == resp.content_type
     assert_advisory_data(DEFAULT_ADVISORY_ID, workaround=workaround, impact=impact)
     assert 1 == advisory_count()
+    advisory = get_advisory()
+    data = default_advisory_dict(dict(changed=str(advisory.changed),
+                                     reference=f'{TRACKER_MAILMAN_URL}message/{advisory.id}',
+                                     workaround='Updated workaround', impact='Updated impact'))
+    assert client.post(url_for('tracker.edit_advisory', advisory_id=advisory.id), data=data).status_code == 302
+    assert 'Updated workaround' in advisory.content
+    assert 'Updated impact' in advisory.content
+    assert workaround not in advisory.content
+    assert impact not in advisory.content
+    data.update(changed=str(advisory.changed), impact='Final draft impact')
+    assert client.post(url_for('tracker.edit_advisory', advisory_id=advisory.id), data=data).status_code == 302
+    assert 'Final draft impact' in advisory.content
+    assert 'Updated impact' not in advisory.content
+    advisory.impact = 'Changed through another interface'
+    db.session.commit()
+    response = client.get('/{}/raw'.format(advisory.id), follow_redirects=True)
+    assert b'Changed through another interface' in response.data
+    assert b'Final draft impact' not in response.data
+    data.update(changed=str(advisory.changed), reference='')
+    assert client.post(url_for('tracker.edit_advisory', advisory_id=advisory.id), data=data).status_code == 302
+    assert advisory.content is None
 
 
 @logged_in
@@ -531,11 +562,24 @@ def test_advisory_format_issue_listing_single_issue():
 @create_group(id=DEFAULT_GROUP_ID, packages=['foo'], affected='1.2.3-3', fixed='1.2.3-4')
 @create_advisory(id=DEFAULT_ADVISORY_ID, group_package_id=DEFAULT_GROUP_ID, advisory_type=issue_types[1])
 @logged_in
-def test_advisory_publish_advisory_not_found(db, client, patch_get):
+def test_advisory_publish_advisory_not_found(db, client, patch_get, monkeypatch):
     resp = client.post(url_for('tracker.publish_advisory', asa=DEFAULT_ADVISORY_ID), follow_redirects=True,
                        data=dict(reference=TRACKER_MAILMAN_URL, confirm=True))
     assert 200 == resp.status_code
     assert 'Failed to fetch advisory' in resp.data.decode()
+    timeouts = []
+
+    def timed_out(session, url, **kwargs):
+        timeouts.append(kwargs.get('timeout'))
+        raise Timeout()
+
+    monkeypatch.setattr('tracker.advisory.Session.get', timed_out)
+    path = url_for('tracker.publish_advisory', asa=DEFAULT_ADVISORY_ID)
+    assert client.get(path).status_code == 200
+    response = client.post(path, data=dict(reference=TRACKER_MAILMAN_URL))
+    assert b'Failed to fetch advisory' in response.data
+    assert timeouts == [10, 10]
+    assert get_advisory().publication == Publication.scheduled
 
 
 @mark.parametrize('patch_get', ['No advisory'], indirect=True)
@@ -556,10 +600,22 @@ def test_advisory_publish_advisory_text_wrong(db, client, patch_get):
 @logged_in
 def test_advisory_publish_advisory(db, client, patch_get):
     assert client.get('/advisory/{}/publish'.format(DEFAULT_ADVISORY_ID)).status_code == 200
+    advisory = get_advisory()
+    advisory.reference = f'{TRACKER_MAILMAN_URL}message/{DEFAULT_ADVISORY_ID}'
+    advisory.content = 'Outdated draft content'
+    advisory.impact = 'Current reviewed impact'
+    db.session.commit()
     resp = client.post(url_for('tracker.publish_advisory', asa=DEFAULT_ADVISORY_ID), follow_redirects=True,
                        data=dict(reference=f'{TRACKER_MAILMAN_URL}message/{DEFAULT_ADVISORY_ID}', confirm=True))
     assert 200 == resp.status_code
+    assert 'Current reviewed impact' in advisory.content
+    assert 'Outdated draft content' not in advisory.content
     assert 'Published {}'.format(DEFAULT_ADVISORY_ID) in resp.data.decode()
+    published_content = advisory.content
+    data = default_advisory_dict(dict(changed=str(advisory.changed), reference=advisory.reference,
+                                     impact='A later correction'))
+    assert client.post('/{}/edit'.format(advisory.id), data=data).status_code == 302
+    assert advisory.content == published_content
 
 
 @create_issue(id='CVE-1234-1234', description='qux AVG-1 is broken and foo.')
@@ -608,6 +664,7 @@ def test_advisory_published_html_content_escaped(db, client):
 @create_package(name='foo', version='1.2.3-4')
 @create_group(id=DEFAULT_GROUP_ID, packages=['foo'], affected='1.2.3-3', fixed='1.2.3-4')
 @create_advisory(id=DEFAULT_ADVISORY_ID, group_package_id=DEFAULT_GROUP_ID, advisory_type=issue_types[1],
+                 publication=Publication.published,
                  content=create_advisory_content(description='<description>', impact='<impact>', workaround='<workaround>'))
 @logged_in
 def test_advisory_published_raw_content_unescaped(db, client, patch_get):
