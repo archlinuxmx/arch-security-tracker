@@ -654,7 +654,7 @@ def test_missing_cve_creation_link(db, client):
     assert ('/cve/add?cve=' + cve).encode() in response.data
     response = client.get('/cve/add', query_string={'cve': cve})
     assert ('value="' + cve + '"').encode() in response.data
-    client.get('/logout')
+    client.post('/logout')
     assert b'/cve/add?cve=' not in client.get('/' + cve).data
 
 

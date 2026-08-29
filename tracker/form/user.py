@@ -3,7 +3,7 @@ from hmac import compare_digest
 from flask_login import current_user
 from wtforms import PasswordField
 from wtforms import SubmitField
-from wtforms.validators import DataRequired
+from wtforms.validators import InputRequired
 from wtforms.validators import Length
 
 from config import TRACKER_PASSWORD_LENGTH_MAX
@@ -18,16 +18,13 @@ ERROR_PASSWORD_INCORRECT = 'Current password incorrect.'
 
 
 class UserPasswordForm(BaseForm):
-    password = PasswordField(u'New Password', validators=[DataRequired(), Length(min=TRACKER_PASSWORD_LENGTH_MIN, max=TRACKER_PASSWORD_LENGTH_MAX)])
-    password_repeat = PasswordField(u'Repeat Password', validators=[DataRequired(), Length(min=TRACKER_PASSWORD_LENGTH_MIN, max=TRACKER_PASSWORD_LENGTH_MAX)])
-    password_current = PasswordField(u'Current Password', validators=[DataRequired(), Length(min=TRACKER_PASSWORD_LENGTH_MIN, max=TRACKER_PASSWORD_LENGTH_MAX)])
+    password = PasswordField(u'New Password', validators=[InputRequired(), Length(min=TRACKER_PASSWORD_LENGTH_MIN, max=TRACKER_PASSWORD_LENGTH_MAX)])
+    password_repeat = PasswordField(u'Repeat Password', validators=[InputRequired(), Length(min=TRACKER_PASSWORD_LENGTH_MIN, max=TRACKER_PASSWORD_LENGTH_MAX)])
+    password_current = PasswordField(u'Current Password', validators=[InputRequired(), Length(min=TRACKER_PASSWORD_LENGTH_MIN, max=TRACKER_PASSWORD_LENGTH_MAX)])
     submit = SubmitField(u'submit')
 
-    def __init__(self, edit=False):
-        super().__init__()
-
     def validate(self, **kwargs):
-        rv = BaseForm.validate(self, kwargs)
+        rv = super().validate(**kwargs)
         if not rv:
             return False
 

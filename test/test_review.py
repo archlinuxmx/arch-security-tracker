@@ -38,7 +38,7 @@ def test_assessment_history_is_private_and_conflict_checked(db, client, app, mon
     User.query.one().active = False
     db.session.commit()
     assert client.get('/review/' + record.id).status_code == 403
-    client.get('/logout')
+    client.post('/logout')
     assert client.get('/review/' + record.id).status_code == 302
 
 

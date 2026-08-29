@@ -1,0 +1,10 @@
+{%- extends "base.html" -%}
+{% block content %}
+			<h1>{{ title }}</h1>
+			<form action="{{ url_for('tracker.logout') }}" method="post" name="confirm">
+				{{ form.hidden_tag() }}
+				<p>Are you sure you want to log out?</p>
+				{{ form.confirm(class='button-primary') }}
+				{{ form.abort(class='button-primary', accesskey='c') }}
+			</form>
+{%- endblock %}

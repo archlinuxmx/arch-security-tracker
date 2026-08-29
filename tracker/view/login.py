@@ -15,6 +15,7 @@ from tracker import db
 from tracker import oauth
 from tracker import tracker
 from tracker.form import LoginForm
+from tracker.form.confirm import ConfirmForm
 from tracker.model.user import User
 from tracker.user import get_user_role_from_idp_groups
 from tracker.user import hash_password
@@ -72,7 +73,16 @@ def logout():
     if not current_user.is_authenticated:
         return redirect(url_for('tracker.index'))
 
+    form = ConfirmForm()
+    if not form.validate_on_submit():
+        if form.is_submitted():
+            return bad_request('A valid CSRF token is required.')
+        return render_template('form/logout.html', title='Log out', form=form)
+    if form.abort.data:
+        return redirect(url_for('tracker.index'))
+
     user_invalidate(current_user)
+    db.session.commit()
     logout_user()
 
     if SSO_ENABLED:

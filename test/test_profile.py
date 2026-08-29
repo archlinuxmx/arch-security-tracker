@@ -11,6 +11,7 @@ from tracker.form.user import ERROR_PASSWORD_CONTAINS_USERNAME
 from tracker.form.user import ERROR_PASSWORD_INCORRECT
 from tracker.form.user import ERROR_PASSWORD_REPEAT_MISMATCHES
 from tracker.model import CVE
+from tracker.user import hash_password
 from tracker.user import random_string
 
 from .conftest import DEFAULT_USERNAME
@@ -21,11 +22,20 @@ from .conftest import logged_in
 
 @logged_in
 def test_change_password(db, client):
+    cookie = client.get_cookie('session', domain='cyber.local').value
     new_password = DEFAULT_USERNAME[::-1]
     resp = client.post(url_for('tracker.edit_own_user_profile'), follow_redirects=True,
                        data=dict(password=new_password, password_repeat=new_password,
                                  password_current=DEFAULT_USERNAME))
     assert resp.status_code == 200
+    assert_logged_in(resp)
+    db.session.remove()
+    with client.application.app_context():
+        replay = client.application.test_client()
+        replay.set_cookie('session', cookie, domain='cyber.local')
+        stale = replay.get('/tokens', follow_redirects=False)
+    assert stale.status_code == 302
+    assert '/login' in stale.location
 
     # logout and test if new password was applied
     resp = client.post(url_for('tracker.logout'), follow_redirects=True)
@@ -34,6 +44,44 @@ def test_change_password(db, client):
                        data=dict(username=DEFAULT_USERNAME, password=new_password))
     assert_logged_in(resp)
     assert DEFAULT_USERNAME == current_user.name
+
+
+@logged_in
+def test_password_change_preserves_whitespace(db, client):
+    password = '  correct horse battery  '
+    data = dict(password=password, password_repeat=password.strip(), password_current=DEFAULT_USERNAME)
+    response = client.post('/profile', data=data)
+    assert response.status_code == 200
+    assert ERROR_PASSWORD_REPEAT_MISMATCHES.encode() in response.data
+
+    data['password_repeat'] = password
+    assert client.post('/profile', data=data).status_code == 302
+    assert current_user.password == hash_password(password, current_user.salt)
+
+    data = dict(password='a different horse battery', password_repeat='a different horse battery',
+                password_current=password.strip())
+    response = client.post('/profile', data=data)
+    assert response.status_code == 200
+    assert ERROR_PASSWORD_INCORRECT.encode() in response.data
+    data['password_current'] = password
+    assert client.post('/profile', data=data).status_code == 302
+
+    spaces = ' ' * TRACKER_PASSWORD_LENGTH_MIN
+    data = dict(password=spaces, password_repeat=spaces, password_current='a different horse battery')
+    assert client.post('/profile', data=data).status_code == 302
+    assert current_user.password == hash_password(spaces, current_user.salt)
+    data = dict(password=password, password_repeat=password, password_current=spaces)
+    assert client.post('/profile', data=data).status_code == 302
+
+
+@logged_in
+def test_password_change_redirect_keeps_application_prefix(db, client):
+    password = DEFAULT_USERNAME[::-1]
+    response = client.post('/profile', environ_overrides={'SCRIPT_NAME': '/tracker'},
+                           data=dict(password=password, password_repeat=password,
+                                     password_current=DEFAULT_USERNAME))
+    assert response.status_code == 302
+    assert response.location == '/tracker/'
 
 
 @logged_in
