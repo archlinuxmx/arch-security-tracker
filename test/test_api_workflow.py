@@ -360,7 +360,7 @@ def test_advisory_drafts_generate_content_without_publishing(db, client, workflo
     advisory.impact = 'publishedimpactmarker'
     advisory.content = generate_advisory(advisory.id)
     db.session.commit()
-    client.get('/logout')
+    client.post('/logout')
     for suffix in ('', '/raw', '/generate', '/generate/raw', '/log'):
         response = client.get('/' + record['name'] + suffix, follow_redirects=True)
         assert response.status_code == 200

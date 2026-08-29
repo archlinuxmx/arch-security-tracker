@@ -26,7 +26,7 @@ ERROR_EMAIL_EXISTS = 'E-Mail already exists.'
 class UserForm(BaseForm):
     username = StringField(u'Username', validators=[DataRequired(), Length(max=User.NAME_LENGTH), Regexp(username_regex)])
     email = EmailField(u'E-Mail', validators=[DataRequired(), Length(max=User.EMAIL_LENGTH), Email()])
-    password = PasswordField(u'Password', validators=[Optional(), Length(min=TRACKER_PASSWORD_LENGTH_MIN, max=TRACKER_PASSWORD_LENGTH_MAX)])
+    password = PasswordField(u'Password', validators=[Optional(strip_whitespace=False), Length(min=TRACKER_PASSWORD_LENGTH_MIN, max=TRACKER_PASSWORD_LENGTH_MAX)])
     role = SelectField(u'Role', choices=[(e.name, e.label) for e in [*UserRole]], default=UserRole.reporter.name, validators=[DataRequired()])
     active = BooleanField(u'Active', default=True)
     random_password = BooleanField(u'Randomize password', default=False)

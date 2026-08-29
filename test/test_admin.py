@@ -7,7 +7,9 @@ from werkzeug.exceptions import Unauthorized
 from tracker.form.admin import ERROR_EMAIL_EXISTS
 from tracker.form.admin import ERROR_USERNAME_EXISTS
 from tracker.form.login import ERROR_ACCOUNT_DISABLED
+from tracker.model import User
 from tracker.model.enum import UserRole
+from tracker.user import hash_password
 from tracker.user import random_string
 
 from .conftest import DEFAULT_USERNAME
@@ -75,6 +77,27 @@ def test_create_user(db, client):
     assert USERNAME == current_user.name
     assert EMAIL == current_user.email
     assert role == current_user.role
+
+
+@logged_in
+def test_account_passwords_preserve_whitespace(db, client):
+    data = dict(username=USERNAME, email=EMAIL, password=' ',
+                role=UserRole.reporter.name, active=True)
+    assert client.post('/user/create', data=data).status_code == 200
+    assert User.query.filter_by(name=USERNAME).count() == 0
+    data['password'] = '  correct horse battery  '
+    assert client.post('/user/create', data=data).status_code == 302
+    user = User.query.filter_by(name=USERNAME).one()
+    assert user.password == hash_password(data['password'], user.salt)
+    previous_password = user.password
+    data['password'] = ' '
+    assert client.post(url_for('tracker.edit_user', username=USERNAME), data=data).status_code == 200
+    assert user.password == previous_password
+    data['password'] = ' another horse battery '
+    assert client.post(url_for('tracker.edit_user', username=USERNAME), data=data).status_code == 302
+    assert user.password == hash_password(data['password'], user.salt)
+    client.post('/logout')
+    assert client.post('/login', data=dict(username=USERNAME, password=data['password'])).status_code == 302
 
 
 @logged_in

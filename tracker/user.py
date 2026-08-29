@@ -2,8 +2,10 @@ from base64 import b85encode
 from functools import wraps
 from os import urandom
 
+from flask import request
 from flask_login import current_user
 from flask_login import login_required
+from flask_login import logout_user
 from scrypt import hash as shash
 from sqlalchemy.exc import IntegrityError
 
@@ -43,12 +45,29 @@ def load_user(session_token):
     return user
 
 
-def permission_required(permission):
+def lock_session_user():
+    """Keep session validation and browser writes in the same transaction."""
+    table = User.__table__
+    result = db.session.execute(table.update().where(
+        table.c.id == current_user.id, table.c.token == current_user.token).values(id=table.c.id))
+    if result.rowcount != 1:
+        logout_user()
+        db.session.rollback()
+        return False
+    db.session.expire_all()
+    return True
+
+
+def permission_required(permission=None):
     def decorator(func):
         @wraps(func)
         def decorated_view(*args, **kwargs):
-            if not current_user.active or not permission.fget(current_user.role):
-                from tracker.view.error import forbidden
+            from tracker.view.error import forbidden
+
+            if request.method not in ('GET', 'HEAD', 'OPTIONS') and not lock_session_user():
+                return forbidden()
+            if not current_user.active or (permission is not None and not permission.fget(current_user.role)):
+                db.session.rollback()
                 return forbidden()
             return func(*args, **kwargs)
         return login_required(decorated_view)

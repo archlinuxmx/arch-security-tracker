@@ -55,7 +55,7 @@ def test_token_permissions(db, client, role, active):
     assert client.post('/tokens/1/revoke').status_code == 403
     assert ApiToken.query.count() == 0
 
-    client.get('/logout')
+    client.post('/logout')
     assert client.get('/tokens').status_code == 302
     assert client.post('/tokens', data={'name': 'Anonymous'}).status_code == 302
     assert ApiToken.query.count() == 0

@@ -1,8 +1,10 @@
 from flask import flash
 from flask import redirect
 from flask import render_template
+from flask import url_for
 from flask_login import current_user
 from flask_login import login_required
+from flask_login import login_user
 from sqlalchemy import and_
 from sqlalchemy_continuum import version_class
 from sqlalchemy_continuum import versioning_manager
@@ -19,13 +21,15 @@ from tracker.model import CVEGroup
 from tracker.model import User
 from tracker.user import hash_password
 from tracker.user import only_without_sso
+from tracker.user import permission_required
 from tracker.user import random_string
+from tracker.user import user_assign_new_token
 from tracker.util import page_number
 
 
 @tracker.route('/profile', methods=['GET', 'POST'])
 @only_without_sso
-@login_required
+@permission_required()
 def edit_own_user_profile():
     form = UserPasswordForm()
     if not form.validate_on_submit():
@@ -35,13 +39,14 @@ def edit_own_user_profile():
                                password_length={'min': TRACKER_PASSWORD_LENGTH_MIN,
                                                 'max': TRACKER_PASSWORD_LENGTH_MAX})
 
-    user = current_user
+    user = current_user._get_current_object()
     user.salt = random_string()
     user.password = hash_password(form.password.data, user.salt)
-    db.session.commit()
+    user_assign_new_token(user)
+    login_user(user)
 
     flash('Profile saved')
-    return redirect('/')
+    return redirect(url_for('tracker.index'))
 
 
 # TODO: define permission to view this

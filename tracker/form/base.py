@@ -1,11 +1,13 @@
 from flask_wtf import FlaskForm
+from wtforms import PasswordField
 
 
 class BaseForm(FlaskForm):
     class Meta:
         def bind_field(self, form, unbound_field, options):
-            filters = unbound_field.kwargs.get('filters', [])
-            filters.append(strip_filter)
+            filters = list(unbound_field.kwargs.get('filters', []))
+            if not issubclass(unbound_field.field_class, PasswordField):
+                filters.append(strip_filter)
             return unbound_field.bind(form=form, filters=filters, **options)
 
 
