@@ -6,8 +6,10 @@ from flask import url_for
 from flask_login import current_user
 from flask_login import login_user
 from flask_login import logout_user
+from sqlalchemy import or_
 from werkzeug.exceptions import Unauthorized
 
+from config import SSO_CLIENT_ID
 from config import SSO_ENABLED
 from config import TRACKER_PASSWORD_LENGTH_MAX
 from config import TRACKER_PASSWORD_LENGTH_MIN
@@ -16,7 +18,9 @@ from tracker import oauth
 from tracker import tracker
 from tracker.form import LoginForm
 from tracker.form.confirm import ConfirmForm
+from tracker.form.login import ERROR_ACCOUNT_DISABLED
 from tracker.model.user import User
+from tracker.model.user import UserRole
 from tracker.user import get_user_role_from_idp_groups
 from tracker.user import hash_password
 from tracker.user import random_string
@@ -44,9 +48,7 @@ def login():
         return redirect(url_for('tracker.index'))
 
     if SSO_ENABLED:
-        # detect if we are being redirected
-        args = request.args
-        if args.get('state') and args.get('code'):
+        if 'code' in request.args or 'error' in request.args:
             return sso_auth()
 
         redirect_url = url_for('tracker.login', _external=True)
@@ -88,8 +90,10 @@ def logout():
     if SSO_ENABLED:
         metadata = oauth.idp.load_server_metadata()
         end_session_endpoint = metadata.get('end_session_endpoint')
-        params = {'redirect_uri': url_for('tracker.index', _external=True)}
-        return redirect(add_params_to_uri(end_session_endpoint, params))
+        if end_session_endpoint:
+            params = {'client_id': SSO_CLIENT_ID,
+                      'post_logout_redirect_uri': url_for('tracker.index', _external=True)}
+            return redirect(add_params_to_uri(end_session_endpoint, params))
 
     return redirect(url_for('tracker.index'))
 
@@ -125,11 +129,28 @@ def sso_auth():
         return bad_request(LOGIN_ERROR_MISSING_GROUPS_FROM_TOKEN)
 
     user_role = get_user_role_from_idp_groups(idp_groups)
-    if not user_role:
+
+    # Serialize subject binding, account checks, and token issuance with other
+    # account writes; a competing callback must see the committed binding.
+    table = User.__table__
+    db.session.execute(table.update().where(or_(
+        table.c.idp_id == idp_user_sub, table.c.email == idp_email,
+        table.c.name == idp_username)).values(id=table.c.id))
+    db.session.expire_all()
+    user = db.get(User, idp_id=idp_user_sub)
+    if user and not user.active:
+        return forbidden(ERROR_ACCOUNT_DISABLED)
+    if user_role is None:
+        if user:
+            user.role = UserRole.guest
+            user_invalidate(user)
+            db.session.commit()
         return forbidden(LOGIN_ERROR_PERMISSION_DENIED)
 
-    # get local user from current authenticated idp id
-    user = db.get(User, idp_id=idp_user_sub)
+    if user:
+        email_owner = db.get(User, email=idp_email)
+        if email_owner and email_owner.id != user.id:
+            return forbidden(LOGIN_ERROR_EMAIL_ASSOCIATED_WITH_DIFFERENT_USERNAME)
 
     if not user:
         # get local user from idp email address
@@ -146,7 +167,11 @@ def sso_auth():
         if check_user and check_user.email != idp_email:
             return forbidden(LOGIN_ERROR_USERNAME_ASSOCIATE_WITH_DIFFERENT_EMAIL)
 
+    if user and not user.active:
+        return forbidden(ERROR_ACCOUNT_DISABLED)
+
     if user:
+        user.idp_id = idp_user_sub
         user.role = user_role
         user.email = idp_email
     else:
@@ -161,7 +186,6 @@ def sso_auth():
                          idp_id=idp_user_sub)
         db.session.add(user)
 
-    db.session.commit()
     user = user_assign_new_token(user)
     user.is_authenticated = True
     login_user(user)

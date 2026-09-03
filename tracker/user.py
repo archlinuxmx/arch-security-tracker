@@ -181,6 +181,4 @@ def get_user_role_from_idp_groups(idp_groups):
 
     eligible_roles = [group_names_for_roles[group] for group in idp_groups if group in group_names_for_roles]
 
-    if eligible_roles:
-        return sorted(eligible_roles, reverse=False)[0]
-    return None
+    return min(eligible_roles, default=None)

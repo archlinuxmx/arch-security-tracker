@@ -2,7 +2,12 @@ from concurrent.futures import ThreadPoolExecutor
 from re import search
 from threading import Event
 from threading import local
+from unittest.mock import Mock
+from unittest.mock import patch
+from urllib.parse import parse_qs
+from urllib.parse import urlsplit
 
+from authlib.integrations.flask_client import OAuth
 from click.testing import CliRunner
 from flask import url_for
 from flask_login import current_user
@@ -10,6 +15,7 @@ from pytest import mark
 from sqlalchemy import event
 from werkzeug.exceptions import Unauthorized
 
+from config import SSO_CLIENT_ID
 from config import TRACKER_PASSWORD_LENGTH_MIN
 from tracker import create_app
 from tracker.cli.setup import user as create_account
@@ -121,6 +127,44 @@ def test_logout_requires_csrf_protected_post(db, client, monkeypatch):
     assert User.query.one().token == token
 
     assert client.post('/logout', data={'confirm': 'y', 'csrf_token': csrf}).status_code == 302
+    assert User.query.one().token is None
+    with client.session_transaction() as session:
+        assert '_user_id' not in session
+
+
+@mark.parametrize('query, message', [
+    ({'state': 'cancelled', 'error': 'access_denied', 'error_description': 'Authentication cancelled'},
+     b'Authentication cancelled'),
+    ({'code': 'missing-state'}, b'CSRF Warning'),
+])
+def test_sso_callback_errors_do_not_restart_login(db, client, query, message):
+    idp = OAuth(client.application).register(
+        'idp', client_id='tracker', authorize_url='https://idp.example.org/authorize')
+    with patch('tracker.view.login.SSO_ENABLED', True), patch('tracker.oauth.idp', idp, create=True):
+        response = client.get('/login', query_string=query)
+    assert response.status_code == 400
+    assert message in response.data
+    assert 'Location' not in response.headers
+    assert User.query.count() == 0
+
+
+@mark.parametrize('endpoint', [None, 'https://idp.example.org/logout'])
+@logged_in
+def test_sso_logout(db, client, endpoint):
+    idp = Mock()
+    idp.load_server_metadata.return_value = {'end_session_endpoint': endpoint} if endpoint else {}
+    with patch('tracker.view.login.SSO_ENABLED', True), patch('tracker.oauth.idp', idp, create=True):
+        response = client.post('/logout')
+    assert response.status_code == 302
+    if endpoint:
+        target = urlsplit(response.location)
+        assert target.scheme + '://' + target.netloc + target.path == endpoint
+        assert parse_qs(target.query) == {
+            'client_id': [SSO_CLIENT_ID],
+            'post_logout_redirect_uri': ['http://cyber.local/'],
+        }
+    else:
+        assert response.location == '/'
     assert User.query.one().token is None
     with client.session_transaction() as session:
         assert '_user_id' not in session
