@@ -24,7 +24,7 @@
 						</table>
 					</div>
 					<div class="row">
-						Are you sure you want to delete <a href="/user/{{ user.name }}/edit">{{ user.name }}</a>?<br />
+						Are you sure you want to delete <a href="{{ url_for('tracker.edit_user', username=user.name) }}">{{ user.name }}</a>?<br />
 						<br />
 						{{ form.confirm(class='button-primary') }}
 						{{ form.abort(class='button-primary', accesskey='c') }}

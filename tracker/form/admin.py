@@ -27,17 +27,17 @@ class UserForm(BaseForm):
     username = StringField(u'Username', validators=[DataRequired(), Length(max=User.NAME_LENGTH), Regexp(username_regex)])
     email = EmailField(u'E-Mail', validators=[DataRequired(), Length(max=User.EMAIL_LENGTH), Email()])
     password = PasswordField(u'Password', validators=[Optional(strip_whitespace=False), Length(min=TRACKER_PASSWORD_LENGTH_MIN, max=TRACKER_PASSWORD_LENGTH_MAX)])
-    role = SelectField(u'Role', choices=[(e.name, e.label) for e in [*UserRole]], default=UserRole.reporter.name, validators=[DataRequired()])
+    role = SelectField(u'Role', choices=[(e.name, e.label) for e in UserRole], default=UserRole.reporter.name, validators=[DataRequired()])
     active = BooleanField(u'Active', default=True)
     random_password = BooleanField(u'Randomize password', default=False)
     submit = SubmitField(u'submit')
 
-    def __init__(self, edit=False):
+    def __init__(self, user=None):
         super().__init__()
-        self.edit = edit
+        self.user = user
 
     def validate(self, **kwargs):
-        rv = BaseForm.validate(self, kwargs)
+        rv = super().validate(**kwargs)
         if not rv:
             return False
 
@@ -45,11 +45,11 @@ class UserForm(BaseForm):
             self.password.errors.append('Password must not contain the username.')
             return False
 
-        if self.edit:
-            return True
-
-        user = User.query.filter(or_(User.name == self.username.data,
-                                     User.email == self.email.data)).first()
+        query = User.query.filter(or_(User.name == self.username.data,
+                                      User.email == self.email.data))
+        if self.user is not None:
+            query = query.filter(User.id != self.user.id)
+        user = query.first()
         if not user:
             return True
         if user.name == self.username.data:

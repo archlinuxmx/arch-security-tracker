@@ -106,27 +106,27 @@ def only_without_sso(func):
     return require_expected_sso_state(expected=False)(func)
 
 
-def user_can_edit_issue(advisories=[]):
+def user_can_edit_issue(advisories=()):
     role = current_user.role
     if not role.is_reporter:
         return False
     if role.is_security_team:
         return True
-    return 0 == len(advisories)
+    return not advisories
 
 
-def user_can_delete_issue(advisories=[]):
+def user_can_delete_issue(advisories=()):
     role = current_user.role
     if not role.is_reporter:
         return False
-    return 0 == len(advisories)
+    return not advisories
 
 
-def user_can_edit_group(advisories=[]):
+def user_can_edit_group(advisories=()):
     return user_can_edit_issue(advisories)
 
 
-def user_can_delete_group(advisories=[]):
+def user_can_delete_group(advisories=()):
     return user_can_delete_issue(advisories)
 
 

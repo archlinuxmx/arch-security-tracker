@@ -1,10 +1,11 @@
 from flask import flash
 from flask import redirect
 from flask import render_template
+from flask import url_for
 from flask_login import current_user
 from flask_login import login_required
+from sqlalchemy_continuum import versioning_manager
 
-from config import SSO_ENABLED
 from config import TRACKER_PASSWORD_LENGTH_MAX
 from config import TRACKER_PASSWORD_LENGTH_MIN
 from tracker import db
@@ -29,7 +30,6 @@ from tracker.view.error import not_found
 @login_required
 def list_user():
     users = User.query.order_by(User.name).all()
-    users = sorted(users, key=lambda u: u.name)
 
     if not current_user.role.is_administrator:
         masked = []
@@ -75,22 +75,18 @@ def create_user():
     db.session.commit()
 
     flash('Created user {} with password {}'.format(user.name, password))
-    return redirect('/user')
+    return redirect(url_for('tracker.list_user'))
 
 
 @tracker.route('/user/<regex("{}"):username>/edit'.format(username_regex[1:-1]), methods=['GET', 'POST'])
 @only_without_sso
 @administrator_required
 def edit_user(username):
-    own_user = username == current_user.name
-    if not current_user.role.is_administrator and not own_user:
-        forbidden()
-
     user = User.query.filter_by(name=username).first()
     if not user:
         return not_found()
 
-    form = UserForm(edit=True)
+    form = UserForm(user=user)
     if not form.is_submitted():
         form.username.data = user.name
         form.email.data = user.email
@@ -106,7 +102,8 @@ def edit_user(username):
                                                 'max': TRACKER_PASSWORD_LENGTH_MAX})
 
     active_admins = User.query.filter_by(active=True, role=UserRole.administrator).count()
-    if user.id == current_user.id and 1 == active_admins and not form.active.data:
+    if (user.id == current_user.id and active_admins == 1
+            and (not form.active.data or form.role.data != UserRole.administrator.name)):
         return forbidden()
 
     user.name = form.username.data
@@ -125,7 +122,7 @@ def edit_user(username):
     if form.random_password.data:
         flash_password = ' with password {}'.format(form.password.data)
     flash('Edited user {}{}'.format(user.name, flash_password))
-    return redirect('/user')
+    return redirect(url_for('tracker.list_user'))
 
 
 @tracker.route('/user/<regex("{}"):username>/delete'.format(username_regex[1:-1]), methods=['GET', 'POST'])
@@ -146,14 +143,18 @@ def delete_user(username):
                                user=user)
 
     if not form.confirm.data:
-        return redirect('/user')
+        return redirect(url_for('tracker.list_user'))
 
     active_admins = User.query.filter_by(active=True, role=UserRole.administrator).count()
     if user.id == current_user.id and 1 >= active_admins:
         return forbidden()
 
+    Transaction = versioning_manager.transaction_cls
+    if Transaction.query.filter_by(user_id=user.id).first():
+        return forbidden('Users with recorded changes cannot be deleted. Deactivate the account instead.')
+
     user_invalidate(user)
     db.session.delete(user)
     db.session.commit()
     flash('Deleted user {}'.format(user.name))
-    return redirect('/user')
+    return redirect(url_for('tracker.list_user'))

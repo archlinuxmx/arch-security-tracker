@@ -1,6 +1,6 @@
 {%- extends "base.html" -%}
 {% block content %}
-			<h1>User{% if current_user.role.is_administrator and not SSO_ENABLED %} <a href="/user/create">create</a>{% endif %}</h1>
+			<h1>User{% if current_user.role.is_administrator and not SSO_ENABLED %} <a href="{{ url_for('tracker.create_user') }}">create</a>{% endif %}</h1>
 			<table class="styled-table medium size">
 				<thead>
 					<tr>
@@ -18,15 +18,15 @@
 				<tbody>
 					{%- for user in users %}
 					<tr>
-						<td><a href="/user/{{ user.name }}/log">{{ user.name }}</a></td>
+						<td><a href="{{ url_for('tracker.show_user_log', username=user.name) }}">{{ user.name }}</a></td>
 						<td><a href="mailto:{{ user.email }}">{{ user.email }}</a></td>
 						<td>{{ user.role }}</td>
 						{%- if current_user.role.is_administrator %}
 						<td class="center"><input name="active" type="checkbox" {% if user.active %} checked="checked"{% endif %} disabled="disabled" class="no-margin" /></td>
 						<td class="no-padding">
 							{%- if not SSO_ENABLED %}
-							<a href="/user/{{ user.name }}/edit" class="button button-table button-primary">edit</a>
-							<a href="/user/{{ user.name }}/delete" class="button button-table button-primary">delete</a>
+							<a href="{{ url_for('tracker.edit_user', username=user.name) }}" class="button button-table button-primary">edit</a>
+							<a href="{{ url_for('tracker.delete_user', username=user.name) }}" class="button button-table button-primary">delete</a>
 							{%- endif %}
 						</td>
 						{%- endif %}
