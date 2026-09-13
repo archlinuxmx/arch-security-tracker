@@ -15,13 +15,15 @@ Log in and open `/tokens`. Active reporters can create and revoke their own
 named tokens. Copy the secret once; only its SHA-256 digest is stored.
 Tokens expire after 90 days and have one scope: `cves:create`, `cves:update`,
 `groups:create`, `groups:update`, `intake:create`, or `advisories:write`. The advisory scope
-requires the Security Team or administrator role. Existing tokens remain
-create-only. Use a separate token for each operation and replace it before expiry.
+requires the Security Team or administrator role. Use a separate token for each
+operation and replace it before expiry.
 
 Send `Authorization: Bearer <token>`. Cookies cannot authorize API writes;
 no CSRF token or browser session is needed. Token management uses CSRF-protected
 forms. Revocation is immediate. Every protected request checks the owner's local
 role and active flag; SSO group changes reach that account only on login.
+If a linked account no longer has a permitted group, that callback revokes its
+local role and browser sessions; existing API tokens lose access too.
 
 ## Reads
 

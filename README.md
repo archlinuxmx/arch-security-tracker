@@ -1,4 +1,4 @@
-# Arch Linux Security Tracker [![Build Status](https://travis-ci.com/archlinux/arch-security-tracker.svg?branch=master)](https://travis-ci.com/archlinux/arch-security-tracker)
+# Arch Linux Security Tracker
 
 The **Arch Linux Security Tracker** is a lightweight flask based panel
 for tracking vulnerabilities in Arch Linux packages, displaying
@@ -105,6 +105,17 @@ a new configuration file with a ```.local.conf``` suffix and some non
 zero prefix like ```20-user.local.conf```. Files using this suffix are
 on the ```.gitignore``` and not handled as untracked or dirty.
 
+Use HTTPS in production and keep a private `secret_key`. For a new installation,
+`python dev/configure.py` generates one; existing deployments keep their private key.
+Enable secure cookies in the local configuration:
+
+```ini
+[flask]
+session_cookie_secure = on
+```
+
+Local HTTP development keeps this setting off.
+
 ## SSO setup
 
 A simple test environment for SSO can be configured using Keycloak:
@@ -114,6 +125,8 @@ A simple test environment for SSO can be configured using Keycloak:
 
 2. Create an ```arch-security-tracker``` client in Keycloak like in
    [test/data/openid-client.json](test/data/openid-client.json).
+   Register the tracker root URL, including its trailing slash, as an allowed
+   post-logout redirect URI. The provider may ask for logout confirmation.
    Make sure the client contains a mapper for the group memberships called
    ```groups``` which is included as a claim.
 
