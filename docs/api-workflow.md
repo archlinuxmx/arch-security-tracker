@@ -49,7 +49,9 @@ return `409 already_grouped`; there is no force-create option.
 
 PATCH requires `groups:update` and `If-Match`. Existing dropped packages can
 remain attached; new packages must exist. Packages with advisories cannot be
-removed. Computed status and severity are read-only. Omitting `bug_ticket` preserves
+removed. Existing associations survive package-base changes or historical overlaps;
+new associations undergo package and duplicate checks.
+Computed status and severity are read-only. Omitting `bug_ticket` preserves
 the stored reference. Submitted values must be GitLab URLs or empty; numeric IDs
 are rejected, including unchanged ones. Archived browser references are read-only
 until explicitly replaced.

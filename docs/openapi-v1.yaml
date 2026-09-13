@@ -637,7 +637,8 @@ components:
       additionalProperties: false
       minProperties: 1
       description: Only supplied fields change. Arrays replace memberships. Existing removed-from-repository
-        package names may be retained. Advisory-linked packages cannot be removed. Omitting bug_ticket
+        package names may be retained. Existing associations survive package-base changes or historical overlaps;
+        new associations undergo package and duplicate checks. Advisory-linked packages cannot be removed. Omitting bug_ticket
         preserves the stored reference. Submitted values must be GitLab URLs or empty; numeric IDs are rejected.
       properties:
         cves:
