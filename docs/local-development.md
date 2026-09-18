@@ -72,7 +72,7 @@ Stop the server, then run:
 Use the same packages as the image, with a full update to keep ABIs compatible:
 
 ```sh
-sudo pacman -Syu --needed $(cat dev/arch-packages)
+sudo pacman -Syu --needed $(cat deploy/arch-packages dev/arch-packages)
 git submodule update --init --recursive
 python dev/configure.py
 ./trackerctl setup bootstrap

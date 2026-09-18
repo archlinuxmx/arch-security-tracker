@@ -3,7 +3,8 @@ FROM docker.io/library/archlinux:base
 # Keep Python, pyalpm and libalpm in one Arch package transaction. Building
 # pyalpm with pip can select bindings for a different libalpm ABI.
 COPY dev/arch-packages /tmp/tracker-packages
-RUN pacman -Syu --needed --noconfirm $(cat /tmp/tracker-packages) \
+COPY deploy/arch-packages /tmp/tracker-runtime-packages
+RUN pacman -Syu --needed --noconfirm $(cat /tmp/tracker-runtime-packages /tmp/tracker-packages) \
     && pacman -Scc --noconfirm \
     && python -c 'import pyalpm; print(pyalpm.alpmversion())'
 

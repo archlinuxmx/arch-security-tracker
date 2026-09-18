@@ -13,7 +13,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install Arch dependencies
-        run: pacman -Syu --needed --noconfirm $(cat dev/arch-packages)
+        run: pacman -Syu --needed --noconfirm $(cat deploy/arch-packages dev/arch-packages)
       - name: Run tests
         run: |
           python -m compileall -q tracker test config.py

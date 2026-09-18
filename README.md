@@ -48,7 +48,7 @@ vulnerability details and generating security advisories.
 Install dependencies with a full Arch update:
 
 ```
-sudo pacman -Syu --needed $(cat dev/arch-packages)
+sudo pacman -Syu --needed $(cat deploy/arch-packages dev/arch-packages)
 ```
 
 Arch supplies compiled `pyalpm`; no system pip installation is needed.
