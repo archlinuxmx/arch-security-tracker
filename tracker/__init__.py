@@ -18,6 +18,7 @@ from sqlalchemy.sql.expression import ClauseElement
 from sqlalchemy_continuum import make_versioned
 from sqlalchemy_continuum.plugins import FlaskPlugin
 from sqlalchemy_continuum.plugins import PropertyModTrackerPlugin
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.routing import BaseConverter
 
 from config import FLASK_SESSION_PROTECTION
@@ -117,13 +118,18 @@ def create_app(test_config=None):
     if test_config is not None:
         app.config.update(test_config)
 
+    proxy_hops = app.config['TRACKER_PROXY_HOPS']
+    if proxy_hops:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=proxy_hops, x_proto=proxy_hops,
+                               x_host=0, x_port=0, x_prefix=0)
+
     db.init_app(app)
     migrate.init_app(app)
     orm.configure_mappers()
 
     talisman.init_app(app,
                       force_https=False,
-                      session_cookie_secure=False,
+                      session_cookie_secure=app.config['SESSION_COOKIE_SECURE'],
                       content_security_policy=csp,
                       strict_transport_security=FLASK_STRICT_TRANSPORT_SECURITY,
                       referrer_policy='no-referrer')
@@ -162,6 +168,9 @@ def create_app(test_config=None):
     app.register_blueprint(tracker)
     app.register_blueprint(blueprint)
     app.register_blueprint(api)
+
+    from tracker.health import register_health_checks
+    register_health_checks(app)
 
     @app.shell_context_processor
     def make_shell_context():

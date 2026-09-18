@@ -7,6 +7,7 @@ from time import time
 from pyalpm import vercmp
 from pycman.config import init_with_config
 
+from config import PACMAN_CONFIG_PATH
 from config import PACMAN_HANDLE_CACHE_TIME
 from config import basedir
 from tracker.util import cmp_to_key
@@ -14,7 +15,7 @@ from tracker.util import cmp_to_key
 archs = ['x86_64']
 primary_arch = 'x86_64'
 repos = {'x86_64': ['core', 'core-testing', 'extra', 'extra-testing', 'multilib', 'multilib-testing']}
-configpath = './pacman/arch/{}/pacman.conf'
+configpath = PACMAN_CONFIG_PATH
 handles = {}
 chdir(basedir)
 
