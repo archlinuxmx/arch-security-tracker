@@ -13,6 +13,7 @@ from click import option
 from click import pass_context
 from click import password_option
 
+from config import PACMAN_ROOT
 from config import TRACKER_PASSWORD_LENGTH_MAX
 from config import TRACKER_PASSWORD_LENGTH_MIN
 from config import basedir
@@ -62,9 +63,9 @@ def bootstrap(ctx, purge=False):
         Path(path).mkdir(parents=True, exist_ok=True)
 
     echo('Creating folders...', nl=False)
-    mkdir(join(basedir, 'pacman/cache'))
-    mkdir(join(basedir, 'pacman/log'))
-    mkdir(join(basedir, 'pacman/arch/x86_64/db'))
+    mkdir(join(PACMAN_ROOT, 'cache'))
+    mkdir(join(PACMAN_ROOT, 'log'))
+    mkdir(join(PACMAN_ROOT, 'arch/x86_64/db'))
     echo('done')
 
     ctx.invoke(database, purge=purge)
