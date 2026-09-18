@@ -79,7 +79,7 @@ Run tests:
 make test
 ```
 
-For production run it through ```uwsgi```
+For production containers, see the [deployment guide](docs/container-deployment.md).
 
 ## Command line interface
 
