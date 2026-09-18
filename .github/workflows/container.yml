@@ -1,0 +1,27 @@
+name: Container
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build native image
+        run: >-
+          docker build --pull --platform linux/amd64
+          -f Containerfile -t localhost/arch-security-tracker:test .
+      - name: Check startup and persistence
+        run: python3 deploy/smoke-test.py localhost/arch-security-tracker:test
+      - name: Check deployment templates
+        run: |
+          mkdir -p secrets
+          printf '%s\n' 'only-a-compose-validation-placeholder' > secrets/tracker-secret
+          TRACKER_PUBLIC_URL=https://security.archlinux.mx docker compose config --quiet
+          kubectl kustomize deploy/kubernetes > /tmp/tracker-kubernetes.yaml
