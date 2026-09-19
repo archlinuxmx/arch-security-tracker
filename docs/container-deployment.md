@@ -79,7 +79,7 @@ docker buildx build --platform linux/amd64 \
   -f Containerfile -t REGISTRY/arch-security-tracker:TAG --push .
 ```
 
-In `deploy/kubernetes/deployment.yaml` and `database-job.yaml`, replace
+In `deploy/kubernetes/deployment.yaml` and `database/job.yaml`, replace
 `arch-security-tracker:local` with that tag or digest. Set your storage class in
 `pvc.yaml` and domain in `configmap.yaml`. The default storage request is 5 GiB;
 adjust it for your data. Use a namespace dedicated to this deployment.
@@ -90,10 +90,10 @@ Create the secret and storage before starting the application:
 kubectl create secret generic arch-security-tracker \
   --from-file=secret_key=secrets/tracker-secret
 kubectl apply -f deploy/kubernetes/configmap.yaml -f deploy/kubernetes/pvc.yaml
-kubectl apply -f deploy/kubernetes/database-job.yaml
+kubectl apply -k deploy/kubernetes/database
 kubectl wait --for=condition=complete job/arch-security-tracker-database --timeout=300s
 kubectl logs job/arch-security-tracker-database
-kubectl delete -f deploy/kubernetes/database-job.yaml --cascade=foreground --wait=true
+kubectl delete -k deploy/kubernetes/database --cascade=foreground --wait=true
 kubectl apply -k deploy/kubernetes
 kubectl rollout status deployment/arch-security-tracker
 kubectl exec -it deployment/arch-security-tracker -c web -- \

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: arch-security-tracker
+spec:
+  storageClassName: arch-security-retained
+  resources:
+    requests:
+      storage: 10Gi
