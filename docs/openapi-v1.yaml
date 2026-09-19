@@ -5,7 +5,7 @@ info:
   description: Public CVE, package, AVG, published advisory and synchronization reads; scoped token writes.
     JSON request bodies are limited to 65536 bytes. Public records include notes. Public GET/HEAD responses
     support conditional reads; authenticated drafts and mutations are no-store. PATCH requires the exact strong
-    ETag from a fresh detail GET in If-Match. Tokens have one scope and expire after 90 days. See api-v1.md,
+    ETag from a fresh detail GET in If-Match. Tokens have one or more scopes and expire after 90 days. See api-v1.md,
     api-catalog.md and api-workflow.md.
 servers:
   - {url: /api/v1}
@@ -322,7 +322,7 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: 'Personal token created through the CSRF-protected /tokens browser page. One scope per token:
+      description: 'Personal token created through the CSRF-protected /tokens browser page. Select one or more scopes:
         cves:create, cves:update, groups:create, groups:update, intake:create, or advisories:write. Expires after 90 days;
         owner activity and role are checked on every request. Reporter or higher is required; advisories:write
         requires Security Team or administrator. Browser cookies do not authorize API operations.'

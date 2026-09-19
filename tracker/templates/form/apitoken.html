@@ -1,7 +1,7 @@
 {%- extends "base.html" -%}
 {% block content %}
 			<h1>{{ title }}</h1>
-			<p>API tokens have one scope and use your current account permissions. They expire after 90 days.
+			<p>API tokens use your selected scopes and current account permissions. They expire after 90 days.
 				Use a separate token for each application and revoke tokens you no longer need.</p>
 			{% if secret %}
 			<div class="box">
@@ -18,7 +18,22 @@
 					{% endfor %}
 					{% endif %}
 					{{ render_field(form.name, class='full size', maxlength=64, placeholder='Local ingestion tool', required='', indent=5) }}
-					{{ render_field(form.scope, class='full size', indent=5) }}
+					<fieldset>
+						<legend>{{ form.scope.label.text }}</legend>
+						<p>Select one or more permissions.</p>
+						{% for scope in form.scope %}
+						{{ render_checkbox(scope, required=False, indent=6) }}
+						{% endfor %}
+						{% if form.scope.errors %}
+						<div class="errors">
+							<ul>
+							{% for error in form.scope.errors %}
+								<li>{{ error }}</li>
+							{% endfor %}
+							</ul>
+						</div>
+						{% endif %}
+					</fieldset>
 					{{ form.submit(class='button-primary') }}
 				</form>
 			</div>
@@ -26,13 +41,13 @@
 			{% if tokens %}
 			<table class="styled-table full size">
 				<thead>
-					<tr><th>Name</th><th>Scope</th><th>Created (UTC)</th><th>Expires (UTC)</th><th>Action</th></tr>
+					<tr><th>Name</th><th>Scopes</th><th>Created (UTC)</th><th>Expires (UTC)</th><th>Action</th></tr>
 				</thead>
 				<tbody>
 					{% for token in tokens %}
 					<tr>
 						<td>{{ token.name }}</td>
-						<td>{{ token.scope }}</td>
+						<td>{{ token.scopes|join(', ') }}</td>
 						<td>{{ token.created.strftime('%Y-%m-%d %H:%M') }}</td>
 						<td>{{ token.expires_at.strftime('%Y-%m-%d %H:%M') }}</td>
 						<td>

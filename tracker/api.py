@@ -206,7 +206,7 @@ def token_required(func=None, *, scope=ApiToken.SCOPE):
             token = ApiToken.query.filter_by(token_hash=token_hash).first()
         if token is None or token.expires_at <= datetime.utcnow() or token.user is None:
             raise APIError(401, 'unauthorized', 'A valid Bearer token is required.')
-        if not token.user.active or not token.user.role.is_reporter or token.scope != scope:
+        if not token.user.active or not token.user.role.is_reporter or not token.has_scope(scope):
             raise APIError(403, 'forbidden', 'This token does not permit this operation.')
         if scope == 'advisories:write' and not token.user.role.is_security_team:
             raise APIError(403, 'forbidden', 'Security Team membership is required.')

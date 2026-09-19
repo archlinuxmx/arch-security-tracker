@@ -19,7 +19,7 @@ class ApiToken(db.Model):
     user = db.relationship('User')
     name = db.Column(db.String(NAME_LENGTH), nullable=False)
     token_hash = db.Column(db.String(64), index=True, unique=True, nullable=False)
-    scope = db.Column(db.String(32), nullable=False, default=SCOPE)
+    scope = db.Column(db.String(255), nullable=False, default=SCOPE)
     created = db.Column(db.DateTime(), nullable=False, default=datetime.utcnow)
     expires_at = db.Column(db.DateTime(), nullable=False)
 
@@ -27,11 +27,24 @@ class ApiToken(db.Model):
     def digest(raw):
         return sha256(raw.encode('utf-8')).hexdigest()
 
+    @property
+    def scopes(self):
+        return tuple((self.scope or '').split())
+
+    def has_scope(self, scope):
+        scopes = self.scopes
+        return scope in scopes and all(value in self.SCOPES for value in scopes)
+
     @classmethod
     def issue(cls, user, name, scope=SCOPE):
-        """Return an unsaved token and its secret, which must only be shown once."""
-        if scope not in cls.SCOPES or (scope == 'advisories:write' and not user.role.is_security_team):
+        """Return an unsaved token and secret for one scope or a collection."""
+        scopes = [scope] if isinstance(scope, str) else scope
+        if (not isinstance(scopes, (list, tuple, set, frozenset)) or not scopes
+                or any(value not in cls.SCOPES for value in scopes)):
+            raise ValueError('Select at least one valid scope.')
+        if 'advisories:write' in scopes and not user.role.is_security_team:
             raise ValueError('Scope is not available to this user.')
+        scope = ' '.join(value for value in cls.SCOPES if value in scopes)
         raw = 'ast_' + token_urlsafe(32)
         created = datetime.utcnow()
         token = cls(user=user, name=name, token_hash=cls.digest(raw), scope=scope,

@@ -13,10 +13,13 @@ Remote clients must use HTTPS; local examples use HTTP on loopback.
 
 Log in and open `/tokens`. Active reporters can create and revoke their own
 named tokens. Copy the secret once; only its SHA-256 digest is stored.
-Tokens expire after 90 days and have one scope: `cves:create`, `cves:update`,
+Tokens expire after 90 days. Select one or more scopes: `cves:create`, `cves:update`,
 `groups:create`, `groups:update`, `intake:create`, or `advisories:write`. The advisory scope
-requires the Security Team or administrator role. Use a separate token for each
-operation and replace it before expiry.
+requires the Security Team or administrator role. Choose only the permissions
+an application needs and use a separate token for each application.
+For ingestion, one token can include both `cves:create` and `groups:create`.
+Existing tokens retain their scopes; create a new token to change permissions
+or replace an expiring token.
 
 Send `Authorization: Bearer <token>`. Cookies cannot authorize API writes;
 no CSRF token or browser session is needed. Token management uses CSRF-protected
