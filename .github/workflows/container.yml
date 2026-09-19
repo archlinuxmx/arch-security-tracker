@@ -26,3 +26,5 @@ jobs:
           TRACKER_PUBLIC_URL=https://security.archlinux.mx docker compose config --quiet
           kubectl kustomize deploy/kubernetes > /tmp/tracker-kubernetes.yaml
           kubectl kustomize deploy/kubernetes/database > /tmp/tracker-database.yaml
+          kubectl kustomize deploy/gke > /tmp/tracker-gke.yaml
+          kubectl kustomize deploy/gke/database > /tmp/tracker-gke-database.yaml
