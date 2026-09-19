@@ -20,9 +20,11 @@ COPY config/00-default.conf config/00-default.conf
 COPY tracker/ tracker/
 COPY migrations/ migrations/
 COPY .external/normalize.css/normalize.css .external/normalize.css/normalize.css
+COPY .external/archlinux-common-style/html/navbar.html .external/archlinux-common-style/html/navbar.html
 COPY .external/archlinux-common-style/img/ .external/archlinux-common-style/img/
 COPY deploy/entrypoint.py deploy/gunicorn.conf.py deploy/
-RUN test -s tracker/static/normalize.css \
+RUN test -s tracker/templates/navbar.html \
+    && test -s tracker/static/normalize.css \
     && test -s tracker/static/archlogo.8a05bc7f6cd1.svg \
     && test -s tracker/static/favicon.ico \
     && chmod -R a+rX /opt/tracker

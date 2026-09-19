@@ -19,6 +19,8 @@
 !.external/normalize.css/
 !.external/normalize.css/normalize.css
 !.external/archlinux-common-style/
+!.external/archlinux-common-style/html/
+!.external/archlinux-common-style/html/navbar.html
 !.external/archlinux-common-style/img/
 !.external/archlinux-common-style/img/archlogo.8a05bc7f6cd1.svg
 !.external/archlinux-common-style/img/favicon.ico
