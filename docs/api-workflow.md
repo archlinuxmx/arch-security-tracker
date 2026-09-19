@@ -1,6 +1,6 @@
 # Reviewed API writes
 
-Use a separate [scoped token](api-v1.md#tokens) for each operation.
+Use a [token](api-v1.md#tokens) containing the scopes required by your workflow.
 See the [OpenAPI schema](openapi-v1.yaml) for complete request fields.
 
 ## Editing CVEs and groups

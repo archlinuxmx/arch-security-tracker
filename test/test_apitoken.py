@@ -20,7 +20,8 @@ def test_token_creation_and_revocation(db, client, app, monkeypatch):
     assert client.post('/tokens', data={'name': 'Mail ingestion'}).status_code == 400
     assert ApiToken.query.count() == 0
 
-    response = client.post('/tokens', data={'name': '  Mail ingestion  ', 'csrf_token': csrf})
+    response = client.post('/tokens', data={'name': '  Mail ingestion  ', 'scope': 'cves:create',
+                                            'csrf_token': csrf})
     assert response.status_code == 200
     assert response.headers['Cache-Control'] == 'no-store'
     secret = search(r'<code id="new-api-token">(ast_[^<]+)</code>', response.data.decode()).group(1)
