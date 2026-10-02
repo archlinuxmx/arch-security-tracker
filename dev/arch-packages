@@ -1,4 +1,5 @@
 git
 python-isort
+python-mypy_extensions
 python-pytest
 python-pytest-cov
